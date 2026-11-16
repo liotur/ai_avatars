@@ -65,27 +65,25 @@ export function avatarFormResolver(mode: 'create' | 'edit'): Resolver<AvatarForm
   };
 }
 
+type IssueError = { type: string; message: string };
+
+/** One entry per row that has a message, and `root` for a message about the whole list. */
+export type ListErrors = Array<IssueError | undefined> & { root?: IssueError };
+
 function assignIssue(errors: Record<string, unknown>, path: PropertyKey[], message: string, code: string) {
   const head = path[0];
   if (typeof head !== 'string') return;
-  if (path.length <= 1) {
-    if (LIST_FIELDS.has(head)) {
-      const existing = asRecord(errors[head]);
-      existing.root = { type: code, message };
-      errors[head] = existing;
-      return;
-    }
-    errors[head] = { type: code, message };
+  const error: IssueError = { type: code, message };
+  if (!LIST_FIELDS.has(head)) {
+    errors[head] = error;
     return;
   }
-  const existing = asRecord(errors[head]);
-  existing[String(path[1])] = { type: code, message };
-  errors[head] = existing;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object') return value as Record<string, unknown>;
-  return {};
+  // A list's errors are an array: React Hook Form drops a plain object keyed by row when one field is validated.
+  const existing = errors[head];
+  const list: ListErrors = Array.isArray(existing) ? existing : [];
+  if (path.length <= 1) list.root = error;
+  else list[Number(path[1])] = error;
+  errors[head] = list;
 }
 
 export function summarizeErrors(errors: FieldErrors<AvatarFormValues>): SummaryItem[] {

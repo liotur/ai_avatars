@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react';
 import type {
   Control,
   FieldErrors,
@@ -8,6 +9,7 @@ import type {
 import { useWatch } from 'react-hook-form';
 import { groupMessage, itemMessage } from '../form/schema';
 import type { AvatarFormValues, ListName } from '../form/values';
+import { Icon } from './Icon';
 
 const MAX_ITEMS = 10;
 
@@ -17,6 +19,8 @@ type StringListFieldProps = {
   hint?: string;
   addLabel: string;
   minItems?: number;
+  /** The order matters, so each row shows its position and can be moved. */
+  ordered?: boolean;
   control: Control<AvatarFormValues>;
   getValues: UseFormGetValues<AvatarFormValues>;
   setValue: UseFormSetValue<AvatarFormValues>;
@@ -36,6 +40,7 @@ export function StringListField({
   hint,
   addLabel,
   minItems = 0,
+  ordered = false,
   control,
   getValues,
   setValue,
@@ -69,7 +74,41 @@ export function StringListField({
   }
 
   function removeAt(index: number) {
-    write(getValues(name).filter((_, itemIndex) => itemIndex !== index));
+    const current = getValues(name);
+    write(current.filter((_, itemIndex) => itemIndex !== index));
+    // Later rows move up one place, so a message tied to an old place no longer fits its row.
+    for (let moved = index; moved < current.length; moved += 1) clearServerError(`${name}-${moved}`);
+    void trigger(name);
+  }
+
+  /** Enter in a row goes to the next row, or to the add box, and never saves the form. */
+  function onRowKeyDown(event: KeyboardEvent<HTMLInputElement>, index: number) {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    const isLast = index === items.length - 1;
+    const next = document.getElementById(isLast ? `${name}-add` : `${name}-${index + 1}`);
+    if (next instanceof HTMLInputElement && !next.disabled) next.focus();
+  }
+
+  function move(index: number, by: -1 | 1) {
+    const next = [...getValues(name)];
+    const target = index + by;
+    const moved = next[index];
+    const swapped = next[target];
+    if (moved === undefined || swapped === undefined) return;
+    next[index] = swapped;
+    next[target] = moved;
+    write(next);
+    clearServerError(`${name}-${index}`);
+    clearServerError(`${name}-${target}`);
+    void trigger(name);
+    // Keep the keyboard on the row that moved, on whichever control still works there.
+    requestAnimationFrame(() => {
+      const row = document.getElementById(`${name}-${target}`)?.closest('.list-row');
+      const same = row?.querySelector<HTMLButtonElement>(`[data-move="${by}"]:not(:disabled)`);
+      const other = row?.querySelector<HTMLButtonElement>(`[data-move="${-by}"]:not(:disabled)`);
+      (same ?? other)?.focus();
+    });
   }
 
   function addItem() {
@@ -109,6 +148,11 @@ export function StringListField({
             return (
               <li key={inputId}>
                 <div className="list-row">
+                  {ordered ? (
+                    <span className="list-index" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                  ) : null}
                   <input
                     id={inputId}
                     aria-label={`${legend} ${index + 1}`}
@@ -116,19 +160,47 @@ export function StringListField({
                     aria-invalid={message ? true : undefined}
                     aria-describedby={message ? `${inputId}-error` : undefined}
                     onChange={(event) => changeAt(index, event.target.value)}
+                    onKeyDown={(event) => onRowKeyDown(event, index)}
                     onBlur={() => {
                       void trigger(name);
                     }}
                   />
-                  <button
-                    type="button"
-                    className="button button-quiet"
-                    onClick={() => removeAt(index)}
-                    disabled={removeDisabled}
-                    aria-describedby={removeDisabled ? `${inputId}-keep` : undefined}
-                  >
-                    Remove<span className="visually-hidden"> {`${legend} ${index + 1}`}</span>
-                  </button>
+                  <div className="list-tools">
+                    {ordered && items.length > 1 ? (
+                      <>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          data-move="-1"
+                          onClick={() => move(index, -1)}
+                          disabled={index === 0}
+                        >
+                          <Icon name="chevron-up" />
+                          <span className="visually-hidden">Move {`${legend} ${index + 1}`} up</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          data-move="1"
+                          onClick={() => move(index, 1)}
+                          disabled={index === items.length - 1}
+                        >
+                          <Icon name="chevron-down" />
+                          <span className="visually-hidden">Move {`${legend} ${index + 1}`} down</span>
+                        </button>
+                      </>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="icon-button icon-button-danger"
+                      onClick={() => removeAt(index)}
+                      disabled={removeDisabled}
+                      aria-describedby={removeDisabled ? `${inputId}-keep` : undefined}
+                    >
+                      <Icon name="x" />
+                      <span className="visually-hidden">Remove {`${legend} ${index + 1}`}</span>
+                    </button>
+                  </div>
                 </div>
                 {removeDisabled ? (
                   <span id={`${inputId}-keep`} className="visually-hidden">
@@ -174,6 +246,7 @@ export function StringListField({
             }}
           />
           <button type="button" className="button button-quiet" onClick={addItem} disabled={atLimit || !draft.trim()}>
+            <Icon name="plus" />
             Add<span className="visually-hidden"> to {legend}</span>
           </button>
         </div>

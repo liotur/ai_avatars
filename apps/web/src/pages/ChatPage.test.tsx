@@ -59,11 +59,11 @@ function stubFetch(onMessage: Handler) {
   return { sessions: () => sessions, messagePaths };
 }
 
-function renderChat() {
+function renderChat(path = '/chat') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/chat']}>
+      <MemoryRouter initialEntries={[path]}>
         <AppRoutes />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -78,6 +78,13 @@ async function typeMessage(text: string) {
 }
 
 describe('chat', () => {
+  it('is the page the app opens on', async () => {
+    stubFetch(() => answer());
+    renderChat('/');
+    expect(await screen.findByLabelText('Ask something')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('aria-current', 'page');
+  });
+
   it('sends on Enter and keeps Shift+Enter for a new line', async () => {
     stubFetch(() => answer());
     renderChat();
@@ -87,6 +94,59 @@ describe('chat', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(await screen.findByText('Show me the payback.')).toBeInTheDocument();
     expect(screen.getByText('chosen')).toBeInTheDocument();
+  });
+
+  it('says the answer was checked, and why a first draft was rewritten', async () => {
+    const checked = (evaluation: unknown) =>
+      sse([
+        ['avatar', { avatar: CFO, selection: { mode: 'chosen', reason: 'A budget question.' } }],
+        ['stage', { stage: 'drafting' }],
+        ['stage', { stage: 'checking' }],
+        ['evaluation', evaluation],
+        ['delta', { text: 'Show me the payback.' }],
+        ['done', { id: '5d1c7b8e-0f2a-4c3b-9e8d-7a6b5c4d3e2f', createdAt: '2026-11-16T11:02:00Z' }],
+      ]);
+    let calls = 0;
+    stubFetch(() => {
+      calls += 1;
+      return calls === 1
+        ? checked({ verdict: 'passed', failed: [] })
+        : checked({ verdict: 'revised', failed: ['stance'], note: 'Lead with the cash runway.' });
+    });
+    renderChat();
+
+    await typeMessage('Should we hire?');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Show me the payback.')).toBeInTheDocument();
+    expect(screen.getByText('checked')).toBeInTheDocument();
+
+    await typeMessage('And now?');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('rewritten after check')).toBeInTheDocument();
+    expect(
+      screen.getByText("The first draft did not follow the avatar's stance. Lead with the cash runway."),
+    ).toBeInTheDocument();
+  });
+
+  it('starts over with New chat: an empty thread and a new session', async () => {
+    const fetchState = stubFetch(() => answer());
+    renderChat();
+    expect(screen.queryByRole('button', { name: 'New chat' })).not.toBeInTheDocument();
+
+    await typeMessage('Should we hire?');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Show me the payback.')).toBeInTheDocument();
+    expect(fetchState.sessions()).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+    expect(document.querySelectorAll('ol.thread > li')).toHaveLength(0);
+    await waitFor(() => expect(fetchState.sessions()).toBe(2));
+
+    // The next message goes to the new session, which has no memory of the first.
+    await typeMessage('And now?');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fetchState.messagePaths).toHaveLength(2));
+    expect(fetchState.messagePaths[1]).toContain('00000002-');
   });
 
   it('opens a new session and resends when the old one is gone', async () => {
@@ -108,7 +168,7 @@ describe('chat', () => {
     await typeMessage('Should we hire?');
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Show me the payback.')).toBeInTheDocument();
-    expect(screen.getByText('The assistant restarted, so a new chat was opened.')).toBeInTheDocument();
+    expect(screen.getByText('The assistant restarted, so it no longer remembers the earlier messages.')).toBeInTheDocument();
     expect(fetchState.sessions()).toBe(2);
     expect(fetchState.messagePaths).toHaveLength(2);
   });
@@ -128,5 +188,38 @@ describe('chat', () => {
     expect(screen.getByLabelText('Ask something')).toHaveValue('Should we hire?');
     expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
     expect(document.querySelectorAll('ol.thread > li')).toHaveLength(0);
+  });
+
+  it('opens the avatar of an answer in a new tab, so the chat stays', async () => {
+    stubFetch(() => answer());
+    renderChat();
+    const box = await typeMessage('Should we hire?');
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    const link = await screen.findByRole('link', { name: /^Skeptical CFO/ });
+    expect(link).toHaveTextContent('Skeptical CFO (opens in a new tab)');
+    expect(link).toHaveAttribute('href', `/avatars/${CFO.id}`);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('works on an address where the browser has no crypto.randomUUID', async () => {
+    vi.stubGlobal('crypto', {});
+    stubFetch(() => answer());
+    renderChat();
+    const box = await typeMessage('Should we hire?');
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    expect(await screen.findByText('Show me the payback.')).toBeInTheDocument();
+  });
+
+  it('puts an example question in the message box', async () => {
+    stubFetch(() => answer());
+    renderChat();
+    const example = await screen.findByRole('button', { name: 'Explain how vaccines work to a curious ten-year-old.' });
+    await waitFor(() => expect(example).toBeEnabled());
+    fireEvent.click(example);
+
+    expect(screen.getByLabelText('Ask something')).toHaveValue('Explain how vaccines work to a curious ten-year-old.');
   });
 });
