@@ -7,6 +7,7 @@ import { ConfigError, loadConfig, type LlmConfig } from "./config.js";
 import { loadEnvFiles } from "./env.js";
 import { createAvatarMcp } from "./mcp.js";
 import type { AssistantModel } from "./model.js";
+import { providerFetch } from "./tls.js";
 
 loadEnvFiles();
 
@@ -23,8 +24,9 @@ try {
   process.exit(1);
 }
 
-function createAssistantModel(llm: LlmConfig): AssistantModel {
-  return llm.kind === "autox" ? createAutoxModel(llm) : createChatModel(llm);
+function createAssistantModel(llm: LlmConfig, verifyTls: boolean): AssistantModel {
+  const fetchImpl = providerFetch(verifyTls);
+  return llm.kind === "autox" ? createAutoxModel(llm, fetchImpl) : createChatModel(llm, fetchImpl);
 }
 
 // Without a usable model the assistant still starts. It opens sessions and
@@ -36,7 +38,7 @@ const app = createApp({
   checkAnswers: config.checkAnswers,
   ...(llm.ready
     ? {
-        model: createAssistantModel(llm.llm),
+        model: createAssistantModel(llm.llm, config.verifyProviderTls),
         status: { ready: true, provider: llm.llm.provider, model: llm.llm.model },
         ...(llm.llm.key ? { apiKey: llm.llm.key } : {}),
       }
@@ -48,6 +50,9 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   if (llm.ready) {
     console.log(`language model: ${llm.llm.label}, ${llm.llm.model}`);
     console.log(`answer check: ${config.checkAnswers ? "on" : "off (ANSWER_CHECK)"}`);
+    if (!config.verifyProviderTls) {
+      console.log("provider certificate: not checked (LLM_TLS_VERIFY=false)");
+    }
   } else {
     console.error(`language model: NOT CONFIGURED. ${llm.detail}`);
   }

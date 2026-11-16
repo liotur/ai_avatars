@@ -22,8 +22,8 @@ info:
     shows.
 
     The answer is streamed. Classification finishes first, then the response
-    is `text/event-stream`: one `avatar` event, then `delta` events, then
-    `done`.
+    is `text/event-stream`: one `avatar` event, the draft and its check when
+    answers are checked, then the answer as `delta` events, then `done`.
 
     First version: one user, no authentication.
   license:
@@ -132,18 +132,26 @@ paths:
 
         Failures in steps 1–4 are normal HTTP errors and no stream is opened.
         The `200` body is `text/event-stream`. Each event is two lines,
-        `event:` and `data:` (one JSON object), then a blank line. Order:
+        `event:` and `data:` (one JSON object), then a blank line.
 
-        1. `avatar`, once. Data is `AvatarEvent`.
-        2. `stage`, zero or more times. Data is `StageEvent`. Sent only when
-           answers are checked, to say what the assistant is doing.
-        3. `draft`, zero or more times. Data is `DraftEvent`. Sent only when
-           answers are checked: the draft as it is written, to show as work
-           in progress. It is not the answer.
-        4. `evaluation`, at most once. Data is `EvaluationEvent`. Sent only
-           when answers are checked, before any `delta`.
-        5. `delta`, zero or more times. Data is `DeltaEvent`. The answer.
-        6. `done`, once, then the stream closes. Data is `DoneEvent`.
+        The events, each data being the schema of the same name:
+        `avatar` (`AvatarEvent`), `stage` (`StageEvent`), `draft`
+        (`DraftEvent`), `evaluation` (`EvaluationEvent`), `delta`
+        (`DeltaEvent`, the answer), `done` (`DoneEvent`), `error` (`Problem`).
+
+        Order when answers are checked (the default):
+
+        1. `avatar`
+        2. `stage` drafting, then `draft` zero or more times
+        3. `stage` checking, then `evaluation`
+        4. with verdict `passed` or `skipped`: one `delta` holding the whole
+           draft; with verdict `revised`: `stage` revising, then `delta` zero
+           or more times
+        5. `done`
+
+        Order when answers are not checked: `avatar`, `delta` zero or more
+        times, `done`. In either case an `error` takes the place of `done`
+        when the answer fails, and the stream closes.
 
         **The answer check.** Unless it is switched off, the avatar's first
         draft is not yet the answer. It is streamed as `draft` events while
@@ -154,7 +162,9 @@ paths:
         rewritten once by the avatar, with the checker's advice, and the
         rewrite arrives as `delta` events as it is written. When the check
         cannot run, the draft becomes the answer with the verdict `skipped`.
-        A client that reads only `delta` therefore shows checked text only.
+        A client that reads only `delta` never shows a rejected draft. With
+        verdict `skipped` the answer is unchecked, and a rewrite is not
+        checked again.
 
         If the answer fails after the stream has opened, an `error` event
         (data is `Problem`) is sent instead of `done`, and the stream closes.

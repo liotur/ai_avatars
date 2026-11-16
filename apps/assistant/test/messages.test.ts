@@ -696,6 +696,81 @@ describe("assistant HTTP", () => {
       expect(language.evaluate).not.toHaveBeenCalled();
     });
 
+    it("remembers the draft the person watched when the answer fails before it is validated", async () => {
+      const histories: unknown[] = [];
+      let calls = 0;
+      const language = model({
+        streamAnswer: async function* (input) {
+          histories.push(input.history);
+          calls += 1;
+          if (calls === 1) {
+            yield "Half a draft about hiring.";
+            throw new Error("The provider stopped.");
+          }
+          yield "Second answer.";
+        },
+      });
+      const app = createApp({ mcp: mcp(), model: language, checkAnswers: true });
+      const sessionId = await openSession(app);
+      for (const content of ["Should we hire?", "And then?"]) {
+        const response = await app.request(`/v1/sessions/${sessionId}/messages`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+        await response.text();
+      }
+      expect(histories[1]).toEqual([
+        { role: "user", content: "Should we hire?" },
+        { role: "assistant", content: "Half a draft about hiring." },
+      ]);
+    });
+
+    it("does not remember a rejected draft when its rewrite fails before any text", async () => {
+      const histories: unknown[] = [];
+      let calls = 0;
+      const language = model({
+        evaluate: vi
+          .fn()
+          .mockResolvedValueOnce({ checks: { answers: false, sound: true, stance: true, voice: true }, advice: "Answer it." })
+          .mockResolvedValue({ checks: { answers: true, sound: true, stance: true, voice: true }, advice: "" }),
+        streamAnswer: async function* (input) {
+          histories.push(input.history);
+          calls += 1;
+          if (calls === 1) {
+            yield "A dodge.";
+            return;
+          }
+          if (calls === 2) throw new Error("The provider stopped.");
+          yield "Next answer.";
+        },
+      });
+      const app = createApp({ mcp: mcp(), model: language, checkAnswers: true });
+      const sessionId = await openSession(app);
+      for (const content of ["Should we hire?", "And then?"]) {
+        const response = await app.request(`/v1/sessions/${sessionId}/messages`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+        await response.text();
+      }
+      // The third call answers the second message with nothing remembered from the first.
+      expect(histories[2]).toEqual([]);
+    });
+
+    it("sends an error instead of checking an empty draft", async () => {
+      const language = model({
+        streamAnswer: async function* () {
+          yield "  ";
+        },
+      });
+      const events = await ask(createApp({ mcp: mcp(), model: language, checkAnswers: true }));
+      expect(events.map((event) => event.event)).toEqual(["avatar", "stage", "draft", "error"]);
+      expect(events.at(-1)?.data).toMatchObject({ detail: "The model returned an empty answer." });
+      expect(language.evaluate).not.toHaveBeenCalled();
+    });
+
     it("leaves the flow as it was when the check is off", async () => {
       const language = model();
       const events = await ask(createApp({ mcp: mcp(), model: language }));

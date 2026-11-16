@@ -12,5 +12,3 @@ data
 **/data
 **/*.db
 **/*.db-*
-# Read from a mounted folder at start, never copied into the image.
-certs

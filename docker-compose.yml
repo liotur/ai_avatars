@@ -6,6 +6,8 @@
 services:
   avatars:
     build: .
+    # A fixed name, so the image from docker/build-image.sh is the one started.
+    image: ai-avatars:latest
     ports:
       - "${AVATARS_PORT:-8090}:8080"
     environment:
@@ -13,6 +15,9 @@ services:
       AUTOX_USERNAME: ${AUTOX_USERNAME:-}
       AUTOX_KEY: ${AUTOX_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
+      # The container does not trust the Amdocs certificate authorities that
+      # AutoX's certificate is signed by, so it skips that one check. See docs/LLM.md.
+      LLM_TLS_VERIFY: ${LLM_TLS_VERIFY:-false}
       # Rarely changed.
       ANSWER_CHECK: ${ANSWER_CHECK:-}
       AUTOX_BASE_URL: ${AUTOX_BASE_URL:-}
@@ -26,8 +31,6 @@ services:
       LLM_USERNAME: ${LLM_USERNAME:-}
     volumes:
       - avatars-data:/data
-      # Certificate authorities for a provider behind a company CA; see certs/README.md.
-      - ./certs:/certs:ro
 
 volumes:
   avatars-data:

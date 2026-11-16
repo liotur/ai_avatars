@@ -12,7 +12,7 @@ export function Shell() {
       </a>
       <header className="topbar">
         <div className="topbar-inner">
-          <Link className="brand" to="/">
+          <Link className="brand" to="/chat">
             <span className="brand-mark" aria-hidden="true" />
             <span className="brand-name">Avatars</span>
           </Link>

@@ -89,9 +89,9 @@ The draft is checked before the person sees it (`apps/assistant/src/evaluate.ts`
 - `stance` — it is written from the avatar's perspective, weighs what the avatar cares about most, and leaves out what it ignores;
 - `voice` — the wording fits the avatar's intensity.
 
-The checker only judges. When a check fails, its advice goes back to the avatar, which writes the answer again; that rewrite is not checked a second time, so a message costs at most four model calls. When the check itself cannot run (the provider fails, or its reply cannot be read), the draft is shown and labelled as not checked: the check is a quality step, not a gate.
+The checker only judges. When a check fails, its advice goes back to the avatar, which writes the answer again; that rewrite is not checked a second time. A message therefore takes at most five model calls: two classifier attempts, the draft, the check, and one rewrite (plus one repeat of a decision call for a model that does not accept temperature 0). When the check itself cannot run (the provider fails, or its reply cannot be read), the draft is shown and labelled as not checked: the check is a quality step, not a gate.
 
-The stream keeps the two apart. `stage` events say what is happening (`drafting`, `checking`, `revising`). `draft` events carry the draft as it is written, and the UI shows it as thinking. One `evaluation` event gives the verdict (`passed`, `revised`, or `skipped`). Only `delta` events are the answer: the whole draft in one piece when it passed, the rewrite piece by piece when it did not. A client that reads only `delta` shows checked text and nothing else.
+The stream keeps the two apart. `stage` events say what is happening (`drafting`, `checking`, `revising`). `draft` events carry the draft as it is written, and the UI shows it as thinking. One `evaluation` event gives the verdict (`passed`, `revised`, or `skipped`). Only `delta` events are the answer: the whole draft in one piece when it passed, the rewrite piece by piece when it did not. A client that reads only `delta` never shows a rejected draft; with verdict `skipped` the answer is unchecked, and a rewrite is not checked again.
 
 ### Memory
 
@@ -123,7 +123,7 @@ The web app is TypeScript throughout and imports the generated client and Zod sc
 - **Routes:** `/` opens the chat. `/avatars` (library), `/avatars/new` and `/avatars/:id` (one form for create and edit), `/chat` (a new session per page load or "New chat"; `/chat?avatar=<id>` opens it with that avatar picked), and `/how-it-works` (a diagram of the parts and one message traced through them). Any other path shows a not-found page.
 - **Data:** TanStack Query for the avatar REST API. Mutations invalidate the list, and so does an answer from a newly created avatar.
 - **Forms:** React Hook Form with the generated Zod schemas, so the browser and the API apply the same rules.
-- **Chat streaming:** `EventSource` only supports GET, and sending a message is a POST. The client calls `fetch` and parses the `text/event-stream` body itself, handling the `avatar`, `delta`, `done`, and `error` events. An answer can be stopped while it is arriving. Answers are rendered as Markdown (`react-markdown`), without raw HTML.
+- **Chat streaming:** `EventSource` only supports GET, and sending a message is a POST. The client calls `fetch` and parses the `text/event-stream` body itself, handling the `avatar`, `stage`, `draft`, `evaluation`, `delta`, `done`, and `error` events. The draft is shown as thinking, the stage as a line of status, and the evaluation as the `validated` tag. An answer can be stopped while it is arriving. Answers are rendered as Markdown (`react-markdown`), without raw HTML.
 - **Errors:** `application/problem+json` responses are shown by their `detail` field, with field errors placed next to the matching input. A failure with no problem document, such as a proxy's error page, is shown as a plain sentence, never as markup.
 - **Assistant status:** the top bar shows the model in use, or that the assistant needs setup, from `GET /assistant`.
 - **Styling:** one stylesheet (`apps/web/src/styles.css`) built on named colour, radius, and spacing tokens, with a dark and a light theme. The theme follows the system setting until the person switches it. Each avatar gets a colour gradient derived from its name. Fonts are Inter and Sora from Google Fonts. No CSS framework.
@@ -153,6 +153,7 @@ Everything is configured through environment variables, read once at startup. A 
 | `AUTOX_KEY` | assistant | Your AutoX key. Sent as the `api-key` header |
 | `LLM_MODEL` | assistant | `gpt-4.1-mini` (the default) |
 | `ANSWER_CHECK` | assistant | `off` to show answers as they are written, unchecked. On by default |
+| `LLM_TLS_VERIFY` | assistant | `false` skips checking the model provider's certificate. On by default; off in the container |
 | `AUTOX_BASE_URL`, `AUTOX_API_VERSION`, `AUTOX_APPLICATION` | assistant | Rarely changed; defaults in [docs/LLM.md](docs/LLM.md) |
 | `LLM_API_KEY`, `LLM_PROVIDER`, `LLM_BASE_URL` | assistant | Only for running on another provider; see [docs/LLM.md](docs/LLM.md) |
 | `AVATAR_MCP_URL` | assistant | `http://localhost:3001/mcp` (set inside the demo image) |
@@ -176,15 +177,16 @@ pnpm start
 
 Open `http://localhost:5173`. `pnpm start` generates the typed clients from `contracts/` and runs the four apps in watch mode on the ports in the Components table. The assistant is started with Node's `--use-system-ca`, so it trusts the certificate authorities the operating system trusts, which is what lets it reach AutoX on an Amdocs machine.
 
-The same app also runs as one container. Put the Amdocs certificate authorities in `certs/` (see `certs/README.md`), then:
+The same app also runs as one container:
 
 ```
-docker compose up --build
+docker/build-image.sh
+docker compose up -d
 ```
 
-Open `http://localhost:8090`. The SQLite file is on a named volume, so avatars survive a restart. Building the image needs the internet, which the Amdocs network reaches only through its proxy.
+Open `http://localhost:8090`. The SQLite file is on a named volume, so avatars survive a restart. Building the image needs the internet, which the Amdocs network reaches only through its proxy; `docker/build-image.sh` builds through the proxy in `HTTPS_PROXY` when one is set, using a separate build helper that has the proxy, and the plain way otherwise.
 
-That image is for a demo only. It starts all four processes and publishes one port. nginx serves the UI and routes `/v1/avatars` to the avatar manager and `/v1/sessions` and `/v1/assistant` to the assistant; when a service cannot be reached it answers in the APIs' own error format. The start script hands the certificate authorities in the mounted `certs/` folder to the assistant, waits for the three services, and stops the container if any process exits, so a failure is not silent. In a real deployment each component is its own image, with its own scaling and release, and the URLs between them are configuration.
+That image is for a demo only. It starts all four processes and publishes one port. nginx serves the UI and routes `/v1/avatars` to the avatar manager and `/v1/sessions` and `/v1/assistant` to the assistant; when a service cannot be reached it answers in the APIs' own error format. The container does not trust the Amdocs certificate authorities that AutoX's certificate is signed by, so `docker-compose.yml` sets `LLM_TLS_VERIFY=false`, which makes the assistant skip the certificate check on its calls to the model and nowhere else (`apps/assistant/src/tls.ts`). The start script waits for the three services, and stops the container if any process exits, so a failure is not silent. In a real deployment each component is its own image, with its own scaling and release, and the URLs between them are configuration.
 
 Run locally, the web app is not on the same origin as the APIs, so it reads `VITE_AVATAR_API_URL` and `VITE_ASSISTANT_API_URL` (defaults: the local ports), and the two services allow the UI's origin through `CORS_ORIGIN`.
 

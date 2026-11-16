@@ -12,7 +12,7 @@ Four screens, one frame. Boxes are layout, not styling. Copy in the boxes is an 
 +----------------------------------------------------------------+
 ```
 
-- The app opens on the chat: `/` goes to `/chat`, and so does the name in the corner.
+- The app opens on the chat: `/` goes to `/chat`, and the name in the corner links to `/chat`, so clicking it during a chat keeps the conversation.
 - `Chat` is the current page on `/chat`, `Library` on `/avatars` and its sub-pages, and `How it works` on `/how-it-works`. On a narrow screen the three links move to a row of their own under the name.
 - The chip on the right shows the model the assistant answers with. It reads "Assistant needs setup" when no model is configured, and "Assistant offline" when the assistant cannot be reached.
 - The last button switches between the dark and the light theme. The first visit follows the system setting.
@@ -125,7 +125,7 @@ Create and edit are the same form, in five groups. Edit fills the fields and add
 - While an answer is arriving the send button becomes Stop. Stopping keeps the text that has arrived.
 - The assistant remembers the thread, so a follow-up question works and usually stays with the avatar that answered last. Picking another avatar in `Answer as` changes who answers the next message, with the same conversation in view.
 - `New chat` appears once there is a message. It clears the thread and starts a new session, so nothing earlier is remembered.
-- If the assistant restarted, the next message still goes through, with a line saying the earlier messages are no longer remembered.
+- If the assistant no longer has the chat (it restarted, or dropped a long-idle chat), the next message still goes through in a new one, with a line saying the earlier messages are no longer remembered.
 - A failure before the stream is a line above the message box, from the error `detail`, and the message text is put back. A failure mid-answer is shown under the text that arrived.
 - When no model is configured, a notice above the message box says what to set, with "Check again", and the message box is disabled.
 

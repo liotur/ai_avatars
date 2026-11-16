@@ -153,14 +153,20 @@ export function createApp(options: CreateAppOptions) {
         const disconnected = new AbortController();
         stream.onAbort(() => disconnected.abort());
         let answered = "";
+        // With answers checked: the draft so far, and whether the check rejected it.
+        let draft = "";
+        let rejected = false;
         // What the person saw is remembered, even when the answer was stopped or failed part-way.
+        // Before any answer text, that is the draft they watched being written, unless the
+        // check rejected it.
         let remembered = false;
         const remember = () => {
-          if (remembered || !answered) return;
+          const text = answered || (rejected ? "" : draft);
+          if (remembered || !text) return;
           remembered = true;
           sessions.addTurn(sessionId, {
             question: body.content,
-            answer: answered,
+            answer: text,
             avatarId: resolved.avatar.id,
             avatarName: resolved.avatar.name,
           });
@@ -201,7 +207,6 @@ export function createApp(options: CreateAppOptions) {
             // The draft is shown as work in progress while it is written. It becomes
             // the answer only once it has been checked.
             await send("stage", { stage: "drafting" });
-            let draft = "";
             for await (const text of model.streamAnswer({
               system: resolved.system,
               prompt: body.content,
@@ -212,6 +217,8 @@ export function createApp(options: CreateAppOptions) {
               await send("draft", { text });
               draft += text;
             }
+            // Nothing to check, and nothing to show.
+            if (!draft.trim()) throw new Error("The model returned an empty answer.");
 
             await send("stage", { stage: "checking" });
             let advice: string | undefined;
@@ -228,6 +235,7 @@ export function createApp(options: CreateAppOptions) {
                 await send("evaluation", { verdict: "passed", failed });
               } else {
                 advice = adviceFor(evaluation);
+                rejected = true;
                 await send("evaluation", { verdict: "revised", failed, note: advice });
               }
             } catch (error) {

@@ -47,6 +47,14 @@ describe("loadConfig", () => {
     }
   });
 
+  it("checks the provider's certificate unless LLM_TLS_VERIFY switches it off", () => {
+    expect(loadConfig({}).verifyProviderTls).toBe(true);
+    expect(loadConfig({ LLM_TLS_VERIFY: "true" }).verifyProviderTls).toBe(true);
+    for (const value of ["false", "off", "0", "no"]) {
+      expect(loadConfig({ LLM_TLS_VERIFY: value }).verifyProviderTls).toBe(false);
+    }
+  });
+
   it("refuses a bad port or URL of its own", () => {
     expect(() => loadConfig({ PORT: "abc" })).toThrow(ConfigError);
     expect(() => loadConfig({ AVATAR_MCP_URL: "not a url" })).toThrow(/AVATAR_MCP_URL/);

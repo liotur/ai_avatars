@@ -94,16 +94,16 @@ pnpm typecheck   # all type checks
 
 ## Optional: one container
 
-The same app can run as a single Docker container. It is not needed to try the project.
+The same app can run as a single Docker container. It is not needed to try the project. After steps 1 and 2 above:
 
 ```bash
-docker compose up --build
+docker/build-image.sh
+docker compose up -d
 ```
 
-Then open `http://localhost:8090`. Two things differ from the steps above:
+Then open `http://localhost:8090`. To stop it: `docker compose down`.
 
-- **Building needs the internet** (Docker Hub, npm, Debian), and the Amdocs network reaches it only through the company proxy. Build off the VPN, or give Docker the proxy first.
-- **The container does not know the Amdocs certificate authorities**, which AutoX's certificate is signed by. Put them in `certs/` once ([certs/README.md](./certs/README.md) has the one command), or every message ends with "Could not reach the provider".
+Building downloads from the internet, which the Amdocs VPN reaches only through the company proxy, and Docker does not use that proxy by itself. `docker/build-image.sh` builds through the proxy in `HTTPS_PROXY` when one is set, and the plain way when not.
 
 ## License
 

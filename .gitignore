@@ -17,6 +17,7 @@ data/
 .idea/
 .DS_Store
 
-# Certificate authorities for a provider behind a company CA. Local to each machine.
-certs/*
-!certs/README.md
+# Certificates never belong in the repository.
+*.pem
+*.crt
+*.key

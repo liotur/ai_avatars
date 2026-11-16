@@ -236,7 +236,7 @@ describe('chat', () => {
     await typeMessage('Should we hire?');
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Show me the payback.')).toBeInTheDocument();
-    expect(screen.getByText('The assistant restarted, so it no longer remembers the earlier messages.')).toBeInTheDocument();
+    expect(screen.getByText('The assistant no longer had this chat, so it does not remember the earlier messages.')).toBeInTheDocument();
     expect(fetchState.sessions()).toBe(2);
     expect(fetchState.messagePaths).toHaveLength(2);
   });

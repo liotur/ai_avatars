@@ -37,22 +37,10 @@ fail() {
   exit 1
 }
 
-# Certificate authorities from the mounted certs folder, for a model provider
-# whose certificate is signed by a company authority (see certs/README.md).
-assistant_env=(env)
-shopt -s nullglob
-extra_cas=(/certs/*.pem /certs/*.crt)
-shopt -u nullglob
-if [ "${#extra_cas[@]}" -gt 0 ]; then
-  cat "${extra_cas[@]}" > /tmp/extra-ca.pem
-  assistant_env+=(NODE_EXTRA_CA_CERTS=/tmp/extra-ca.pem)
-  echo "Using ${#extra_cas[@]} certificate file(s) from certs/."
-fi
-
 # Only the assistant is given the model key.
 run avatar-manager 3000 env -u LLM_API_KEY -u AUTOX_KEY
 run avatar-mcp 3001 env -u LLM_API_KEY -u AUTOX_KEY
-run assistant 3002 "${assistant_env[@]}"
+run assistant 3002
 
 wait_for() {
   local name="$1" url="$2" i=0
