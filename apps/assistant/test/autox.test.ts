@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createAutoxModel, extractOutputText, responsesUrl } from "../src/autox.js";
-import { loadConfig } from "../src/config.js";
+import { resolveLlm, type AutoxLlm } from "../src/config.js";
 
-const config = loadConfig({
+const config = autox({
   AUTOX_KEY: "test-key",
   AUTOX_USERNAME: "ada",
   AUTOX_BASE_URL: "https://chat.autox.corp.amdocs.azr/api/v1/proxy/openai/",
@@ -11,6 +11,12 @@ const config = loadConfig({
   AUTOX_APPLICATION: "autox-merged-ui",
   LLM_MODEL: "gpt-4.1-mini",
 });
+
+function autox(env: NodeJS.ProcessEnv): AutoxLlm {
+  const state = resolveLlm(env);
+  if (!state.ready || state.llm.kind !== "autox") throw new Error("These settings do not describe AutoX.");
+  return state.llm;
+}
 
 const avatarId = "3f0a8a52-6f43-4a53-9d0e-1b6f0c1c2a77";
 
@@ -107,6 +113,23 @@ describe("AutoX client", () => {
     expect(classifyBody.stream).toBeUndefined();
   });
 
+  it("sends earlier answers as output text, between the system prompt and the new message", async () => {
+    const fetchImpl = vi.fn(async () => sseResponse([delta("ok"), COMPLETED]));
+    const model = createAutoxModel(config, fetchImpl as unknown as typeof fetch);
+    const history = [
+      { role: "user" as const, content: "Can we afford two hires?" },
+      { role: "assistant" as const, content: "Show me the payback." },
+    ];
+    for await (const _ of model.streamAnswer({ system: "Be the CFO.", prompt: "And the second point?", history })) void _;
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect((JSON.parse(String(init.body)) as { input: unknown }).input).toEqual([
+      { role: "system", content: [{ type: "input_text", text: "Be the CFO." }] },
+      { role: "user", content: [{ type: "input_text", text: "Can we afford two hires?" }] },
+      { role: "assistant", content: [{ type: "output_text", text: "Show me the payback." }] },
+      { role: "user", content: [{ type: "input_text", text: "And the second point?" }] },
+    ]);
+  });
+
   it("reads CRLF output-text deltas", async () => {
     const frame =
       'event: response.output_text.delta\r\ndata: {"type":"response.output_text.delta","delta":"Hi"}\r\n\r\n' +
@@ -133,13 +156,19 @@ describe("AutoX client", () => {
     expect(deltas).toEqual(["Hi"]);
   });
 
-  it("does not include the key in a provider error", async () => {
-    const fetchImpl = vi.fn(async () =>
-      jsonResponse({ error: { message: "bad key test-key" } }, 401),
-    );
+  it("names the service and AUTOX_KEY on 401", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: { message: "bad key" } }, 401));
     const model = createAutoxModel(config, fetchImpl as unknown as typeof fetch);
-    await expect(model.classify({ content: "Hi", summaries: [] })).rejects.toThrow(/Check AUTOX_KEY/);
-    await expect(model.classify({ content: "Hi", summaries: [] })).rejects.toThrow(/^(?!.*test-key)/s);
+    await expect(model.classify({ content: "Hi", summaries: [] })).rejects.toThrow(
+      "Amdocs AutoX returned 401. Check AUTOX_KEY, or set LLM_PROVIDER if the key belongs to another service.",
+    );
+  });
+
+  it("does not include the key in a provider error", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: { message: "upstream said test-key" } }, 500));
+    const model = createAutoxModel(config, fetchImpl as unknown as typeof fetch);
+    const failure = (await model.classify({ content: "Hi", summaries: [] }).catch((error: unknown) => error)) as Error;
+    expect(failure.message).toBe("The provider returned 500. upstream said [redacted]");
   });
 
   it("fails a stream that ends without response.completed", async () => {

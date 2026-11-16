@@ -1,9 +1,8 @@
 import type { Avatar, AvatarCreate } from "@avatars/contracts/avatar";
 import type { AvatarRef, Selection } from "@avatars/contracts/assistant";
 
-import type { AssistantModel } from "./autox.js";
-import { LlmCallError } from "./autox.js";
 import { avatarDraftSchema, type Classification } from "./classify.js";
+import { historyForClassifier, type Turn } from "./conversation.js";
 import {
   AvatarNotFoundError,
   AvatarRejectedError,
@@ -11,6 +10,7 @@ import {
   type AvatarMcp,
   type AvatarSummary,
 } from "./mcp.js";
+import { ClassificationRejectedError, describeIssues, LlmCallError, type AssistantModel } from "./model.js";
 import { avatarNotFoundProblem, HttpProblem, llmFailed, mcpFailed } from "./problems.js";
 import { buildAvatarSystemPrompt } from "./prompts.js";
 import { redact } from "./redact.js";
@@ -26,10 +26,18 @@ const MAX_ATTEMPTS = 2;
 export async function resolveAvatar(input: {
   content: string;
   avatarId?: string;
+  /** The earlier turns of this chat, oldest first. */
+  history?: readonly Turn[];
   mcp: AvatarMcp;
   model: AssistantModel;
   secret?: string;
 }): Promise<ResolvedAvatar> {
+  const history = input.history ?? [];
+  const recent = historyForClassifier(history);
+  // The answer is told when another avatar answered earlier in the same chat.
+  const systemFor = (avatar: Avatar) =>
+    buildAvatarSystemPrompt(avatar, { otherStances: history.some((turn) => turn.avatarId !== avatar.id) });
+
   let summaries: AvatarSummary[];
   try {
     summaries = await input.mcp.listAvatars();
@@ -45,7 +53,7 @@ export async function resolveAvatar(input: {
     return {
       avatar,
       selection: { mode: "requested" },
-      system: buildAvatarSystemPrompt(avatar),
+      system: systemFor(avatar),
     };
   }
 
@@ -56,9 +64,14 @@ export async function resolveAvatar(input: {
       decision = await input.model.classify({
         content: input.content,
         summaries,
+        ...(recent.length > 0 ? { history: recent } : {}),
         ...(feedback ? { feedback } : {}),
       });
     } catch (error) {
+      if (error instanceof ClassificationRejectedError) {
+        feedback = redact(error.message, input.secret);
+        continue;
+      }
       throw toHttp(error, "classify", input.secret);
     }
 
@@ -72,7 +85,7 @@ export async function resolveAvatar(input: {
         return {
           avatar,
           selection: { mode: "chosen", reason: decision.reason },
-          system: buildAvatarSystemPrompt(avatar),
+          system: systemFor(avatar),
         };
       } catch (error) {
         if (error instanceof AvatarNotFoundError || (error instanceof HttpProblem && error.problem.status === 404)) {
@@ -83,7 +96,12 @@ export async function resolveAvatar(input: {
       }
     }
 
-    const draft = avatarDraftSchema.parse(decision.draft);
+    const checked = avatarDraftSchema.safeParse(decision.draft);
+    if (!checked.success) {
+      feedback = `The draft is not usable. ${describeIssues(checked.error.issues)}`;
+      continue;
+    }
+    const draft = checked.data;
     const body: AvatarCreate = {
       name: draft.name,
       description: draft.description,
@@ -101,7 +119,7 @@ export async function resolveAvatar(input: {
       return {
         avatar,
         selection: { mode: "created", reason: decision.reason },
-        system: buildAvatarSystemPrompt(avatar),
+        system: systemFor(avatar),
       };
     } catch (error) {
       if (error instanceof AvatarRejectedError && attempt < MAX_ATTEMPTS - 1) {

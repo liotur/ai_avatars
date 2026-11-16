@@ -48,6 +48,15 @@ describe("MCP tool results", () => {
       name: "McpCallError",
     });
   });
+
+  it("treats the MCP server's own input check as a rejected draft", () => {
+    expect(
+      errorFromToolText(
+        "create_avatar",
+        "MCP error -32602: Input validation error: Invalid arguments for tool create_avatar: Too big: expected string to have <=60 characters at name",
+      ),
+    ).toMatchObject({ name: "AvatarRejectedError", status: 400 });
+  });
 });
 
 describe("transportMessage", () => {
