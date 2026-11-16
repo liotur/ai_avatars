@@ -180,7 +180,12 @@ function rejectionStatus(detail: string, status: number | undefined): 400 | 409 
   if (status === 409 || /already exists|name already in use/i.test(detail)) return 409;
   if (status === 400) return 400;
   if (status !== undefined && status !== 400 && status !== 409) return undefined;
-  if (/field is invalid|is not allowed|must contain|must not|items must be unique|validation failed/i.test(detail)) {
+  // "Input validation error" is how the MCP server reports arguments that break a tool's input schema.
+  if (
+    /input validation error|field is invalid|is not allowed|must contain|must not|items must be unique|validation failed/i.test(
+      detail,
+    )
+  ) {
     return 400;
   }
   return undefined;

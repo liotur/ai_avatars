@@ -1,22 +1,33 @@
 # Demo only: one container runs the UI, avatar manager, MCP server, and assistant.
 # In a real deployment each of those is its own image.
+#
+# Settings come from the .env file next to this file (copy .env.example).
+# Only the variables listed here reach the container.
 services:
   avatars:
     build: .
     ports:
-      - "8090:8080"
+      - "${AVATARS_PORT:-8090}:8080"
     environment:
-      AUTOX_KEY: ${AUTOX_KEY:-}
-      LLM_API_KEY: ${LLM_API_KEY:-}
+      # Amdocs AutoX: the user name, the key, and the model. See docs/LLM.md.
       AUTOX_USERNAME: ${AUTOX_USERNAME:-}
+      AUTOX_KEY: ${AUTOX_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      # Rarely changed.
+      ANSWER_CHECK: ${ANSWER_CHECK:-}
+      AUTOX_BASE_URL: ${AUTOX_BASE_URL:-}
+      AUTOX_API_VERSION: ${AUTOX_API_VERSION:-}
+      AUTOX_APPLICATION: ${AUTOX_APPLICATION:-}
       USERNAME: ${USERNAME:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-autox}
-      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
-      AUTOX_BASE_URL: ${AUTOX_BASE_URL:-https://chat.autox.corp.amdocs.azr/api/v1/proxy/openai}
-      AUTOX_API_VERSION: ${AUTOX_API_VERSION:-2025-03-01-preview}
-      AUTOX_APPLICATION: ${AUTOX_APPLICATION:-autox-merged-ui}
+      # Only for running on another provider instead of AutoX.
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_USERNAME: ${LLM_USERNAME:-}
     volumes:
       - avatars-data:/data
+      # Certificate authorities for a provider behind a company CA; see certs/README.md.
+      - ./certs:/certs:ro
 
 volumes:
   avatars-data:

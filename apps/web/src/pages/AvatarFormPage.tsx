@@ -2,7 +2,7 @@ import type { Avatar, AvatarCreate, AvatarUpdate } from '@avatars/contracts/avat
 import { zAvatarCreate, zAvatarId, zAvatarUpdate } from '@avatars/contracts/avatar/zod';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useForm, type FieldErrors, type Resolver } from 'react-hook-form';
+import { useForm, useWatch, type FieldErrors, type Resolver } from 'react-hook-form';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
   createAvatarRequest,
@@ -11,7 +11,10 @@ import {
   updateAvatarRequest,
 } from '../api/avatars';
 import { ProblemError } from '../api/problem';
+import { AvatarOrb } from '../components/AvatarOrb';
 import { Field } from '../components/Field';
+import { Icon } from '../components/Icon';
+import { IntensityMeter } from '../components/IntensityMeter';
 import { BackLink } from '../components/Shell';
 import { StringListField } from '../components/StringListField';
 import { formatCreatedOn } from '../format';
@@ -22,6 +25,7 @@ import {
   pointerToId,
   readableValidationMessage,
   summarizeErrors,
+  type ListErrors,
   type SummaryItem,
 } from '../form/schema';
 import {
@@ -37,10 +41,11 @@ import {
 } from '../form/values';
 import { useDocumentTitle } from '../useDocumentTitle';
 
+// Each line says what the assistant's prompt does at that level.
 const INTENSITIES = [
-  ['subtle', 'Subtle'],
-  ['balanced', 'Balanced'],
-  ['immersive', 'Immersive'],
+  ['subtle', 'Subtle', 'Its priorities decide what the answer covers. The voice stays plain.'],
+  ['balanced', 'Balanced', 'Its priorities, and its way of speaking.'],
+  ['immersive', 'Immersive', 'Fully in character, in the first person.'],
 ] as const;
 
 const DUPLICATE_MESSAGE = 'Already in this list.';
@@ -51,11 +56,14 @@ function withDuplicateCheck(resolver: Resolver<AvatarFormValues>): Resolver<Avat
     const result = await resolver(values, context, options);
     const duplicates = duplicateItems(normalizeForm(values));
     if (duplicates.length === 0) return result;
-    const errors: Record<string, Record<string, unknown>> = { ...(result.errors as Record<string, Record<string, unknown>>) };
+    const errors: Record<string, unknown> = { ...result.errors };
     for (const { field, index } of duplicates) {
-      const existing = { ...errors[field] };
-      existing[String(index)] ??= { type: 'unique', message: DUPLICATE_MESSAGE };
-      errors[field] = existing;
+      const existing = errors[field] as ListErrors | undefined;
+      const list: ListErrors = existing ? [...existing] : [];
+      // Copying an array keeps its rows only, so the message about the whole list is put back.
+      if (existing?.root) list.root = existing.root;
+      list[index] ??= { type: 'unique', message: DUPLICATE_MESSAGE };
+      errors[field] = list;
     }
     return { values: {}, errors: errors as FieldErrors<AvatarFormValues> };
   };
@@ -86,38 +94,46 @@ export function AvatarFormPage() {
   if (!isEdit) return <AvatarEditor mode="create" />;
   if (notFound) {
     return (
-      <>
+      <div className="narrow">
         <BackLink />
-        <h1>Avatar not found</h1>
-        <p role="alert">There is no avatar at this address. It may have been deleted.</p>
-        <p>
-          <Link to="/avatars">Back to avatars</Link>
-        </p>
-      </>
+        <div className="empty">
+          <h1>Avatar not found</h1>
+          <p className="lede" role="alert">
+            There is no avatar at this address. It may have been deleted.
+          </p>
+          <div className="empty-actions">
+            <Link className="button button-quiet" to="/avatars">
+              Back to avatars
+            </Link>
+          </div>
+        </div>
+      </div>
     );
   }
   if (query.isPending) {
     return (
-      <>
+      <div className="narrow">
         <BackLink />
         <h1>Edit avatar</h1>
-        <p role="status">Loading avatar.</p>
-      </>
+        <p className="status" role="status">
+          Loading avatar.
+        </p>
+      </div>
     );
   }
   if (query.isError || !query.data) {
     const message = query.error instanceof ProblemError ? query.error.detail : 'This avatar could not be loaded.';
     return (
-      <>
+      <div className="narrow">
         <BackLink />
         <h1>Edit avatar</h1>
-        <div className="notice">
+        <div className="notice notice-error">
           <p role="alert">{message}</p>
           <button type="button" className="button button-quiet" onClick={() => void query.refetch()}>
             Try again
           </button>
         </div>
-      </>
+      </div>
     );
   }
 
@@ -129,6 +145,7 @@ function AvatarEditor({ mode, avatar }: { mode: 'create' | 'edit'; avatar?: Avat
   const queryClient = useQueryClient();
   const alive = useRef(true);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<SummaryItem[]>([]);
   const [focusToken, setFocusToken] = useState(0);
@@ -319,7 +336,10 @@ function AvatarEditor({ mode, avatar }: { mode: 'create' | 'edit'; avatar?: Avat
   function openDelete() {
     setDeleteError(undefined);
     const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
+    if (!dialog || dialog.open) return;
+    dialog.showModal();
+    // The keyboard starts on Cancel, never on Delete.
+    cancelRef.current?.focus();
   }
 
   function closeDelete() {
@@ -349,6 +369,7 @@ function AvatarEditor({ mode, avatar }: { mode: 'create' | 'edit'; avatar?: Avat
     register,
     formState: { errors },
   } = form;
+  const liveName = useWatch({ control: form.control, name: 'name' }) ?? '';
   const nameError = errors.name?.message ?? serverErrors.name;
   const descriptionError = errors.description?.message ?? serverErrors.description;
   const perspectiveError = errors.perspective?.message ?? serverErrors.perspective;
@@ -366,19 +387,35 @@ function AvatarEditor({ mode, avatar }: { mode: 'create' | 'edit'; avatar?: Avat
   };
 
   return (
-    <>
+    <div className="narrow">
       <BackLink />
-      <h1>{mode === 'create' ? 'New avatar' : 'Edit avatar'}</h1>
-      {mode === 'edit' && avatar ? (
-        <div className="meta-row">
-          <p>
-            Created by {avatar.createdBy} · {formatCreatedOn(avatar.createdAt)}
-          </p>
-          <button type="button" className="button button-danger" onClick={openDelete}>
-            Delete
-          </button>
+      <div className="editor-head">
+        <AvatarOrb name={liveName.trim() || '?'} size="xl" />
+        <div className="editor-title">
+          <p className="eyebrow">{mode === 'create' ? 'New avatar' : 'Edit avatar'}</p>
+          <h1>{liveName.trim() || 'Untitled avatar'}</h1>
+          {mode === 'edit' && avatar ? (
+            <p>
+              {avatar.createdBy === 'assistant' ? 'Created by the assistant' : 'Created in the library'} ·{' '}
+              {formatCreatedOn(avatar.createdAt)}
+            </p>
+          ) : (
+            <p>Describe a stance. The assistant uses it to pick this avatar and to answer as it.</p>
+          )}
         </div>
-      ) : null}
+        {mode === 'edit' && avatar ? (
+          <div className="editor-actions">
+            <Link className="button button-quiet" to={`/chat?avatar=${avatar.id}`}>
+              <Icon name="message" />
+              Ask in chat
+            </Link>
+            <button type="button" className="button button-danger" onClick={openDelete}>
+              <Icon name="trash" />
+              Delete
+            </button>
+          </div>
+        ) : null}
+      </div>
       {summary.length > 1 ? (
         <div ref={summaryRef} tabIndex={-1} role="alert" className="error-summary">
           <p>Some fields need a change before this can be saved.</p>
@@ -402,114 +439,145 @@ function AvatarEditor({ mode, avatar }: { mode: 'create' | 'edit'; avatar?: Avat
         </div>
       ) : null}
       {formError ? (
-        <p className="field-error" role="alert">
-          {formError}
-        </p>
+        <div className="notice notice-error">
+          <p role="alert">{formError}</p>
+        </div>
       ) : null}
       <form className="avatar-form" noValidate onSubmit={onSubmit} aria-busy={saving}>
-        <Field id="name" label="Name" required error={nameError}>
-          {(props) => (
-            <input
-              {...register('name', { onChange: () => clearServerError('name') })}
-              {...props}
-              type="text"
-              autoComplete="off"
-            />
-          )}
-        </Field>
-        <Field
-          id="description"
-          label="Description"
-          required
-          hint="One or two sentences on who this is."
-          error={descriptionError}
-        >
-          {(props) => (
-            <textarea
-              {...register('description', { onChange: () => clearServerError('description') })}
-              {...props}
-              rows={3}
-            />
-          )}
-        </Field>
-        <StringListField
-          {...listProps}
-          name="useWhen"
-          legend="Use when"
-          hint="Optional"
-          addLabel="Add a situation"
-          draft={drafts.useWhen}
-          onDraftChange={(value) => setDraft('useWhen', value)}
-          limitMessage={limits.useWhen}
-          onLimitMessage={(message) => setLimit('useWhen', message)}
-        />
-        <Field id="perspective" label="Perspective" required hint="What it looks at first." error={perspectiveError}>
-          {(props) => (
-            <textarea
-              {...register('perspective', { onChange: () => clearServerError('perspective') })}
-              {...props}
-              rows={4}
-            />
-          )}
-        </Field>
-        <Field id="voice" label="Voice" required hint="How it speaks." error={voiceError}>
-          {(props) => (
-            <textarea {...register('voice', { onChange: () => clearServerError('voice') })} {...props} rows={3} />
-          )}
-        </Field>
-        <StringListField
-          {...listProps}
-          name="caresAbout"
-          legend="Cares about"
-          hint="most first"
-          addLabel="Add"
-          minItems={1}
-          draft={drafts.caresAbout}
-          onDraftChange={(value) => setDraft('caresAbout', value)}
-          limitMessage={limits.caresAbout}
-          onLimitMessage={(message) => setLimit('caresAbout', message)}
-        />
-        <StringListField
-          {...listProps}
-          name="ignores"
-          legend="Ignores"
-          hint="Optional"
-          addLabel="Add"
-          draft={drafts.ignores}
-          onDraftChange={(value) => setDraft('ignores', value)}
-          limitMessage={limits.ignores}
-          onLimitMessage={(message) => setLimit('ignores', message)}
-        />
-        <fieldset
-          id="intensity"
-          tabIndex={-1}
-          className="intensity"
-          aria-invalid={intensityError ? true : undefined}
-          aria-describedby={intensityError ? 'intensity-error' : 'intensity-hint'}
-        >
-          <legend>Intensity</legend>
-          <p id="intensity-hint" className="hint">
-            Subtle covers priorities only. Balanced adds voice. Immersive answers in character.
-          </p>
-          <div className="radios">
-            {INTENSITIES.map(([value, label]) => (
-              <label key={value} htmlFor={`intensity-${value}`}>
-                <input
-                  id={`intensity-${value}`}
-                  type="radio"
-                  {...register('intensity', { onChange: () => clearServerError('intensity') })}
-                  value={value}
-                />
-                {label}
-              </label>
-            ))}
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Identity</h2>
+            <p>Who this avatar is.</p>
           </div>
-          {intensityError ? (
-            <p id="intensity-error" className="field-error" role="alert">
-              {intensityError}
+          <Field id="name" label="Name" required error={nameError}>
+            {(props) => (
+              <input
+                {...register('name', { onChange: () => clearServerError('name') })}
+                {...props}
+                type="text"
+                autoComplete="off"
+              />
+            )}
+          </Field>
+          <Field
+            id="description"
+            label="Description"
+            required
+            hint="One or two sentences on who this is."
+            error={descriptionError}
+          >
+            {(props) => (
+              <textarea
+                {...register('description', { onChange: () => clearServerError('description') })}
+                {...props}
+                rows={3}
+              />
+            )}
+          </Field>
+        </section>
+        <section className="panel">
+          <div className="panel-head">
+            <h2>When to use it</h2>
+            <p>The assistant reads these to decide whether this avatar fits a question.</p>
+          </div>
+          <StringListField
+            {...listProps}
+            name="useWhen"
+            legend="Use when"
+            hint="Optional"
+            addLabel="Add a situation"
+            draft={drafts.useWhen}
+            onDraftChange={(value) => setDraft('useWhen', value)}
+            limitMessage={limits.useWhen}
+            onLimitMessage={(message) => setLimit('useWhen', message)}
+          />
+        </section>
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Stance</h2>
+            <p>How it sees a question, and how it speaks.</p>
+          </div>
+          <Field id="perspective" label="Perspective" required hint="What it looks at first." error={perspectiveError}>
+            {(props) => (
+              <textarea
+                {...register('perspective', { onChange: () => clearServerError('perspective') })}
+                {...props}
+                rows={4}
+              />
+            )}
+          </Field>
+          <Field id="voice" label="Voice" required hint="How it speaks." error={voiceError}>
+            {(props) => (
+              <textarea {...register('voice', { onChange: () => clearServerError('voice') })} {...props} rows={3} />
+            )}
+          </Field>
+        </section>
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Priorities</h2>
+            <p>What decides the answer, and what is left out of it.</p>
+          </div>
+          <StringListField
+            {...listProps}
+            name="caresAbout"
+            legend="Cares about"
+            hint="Most important first"
+            addLabel="Add"
+            minItems={1}
+            ordered
+            draft={drafts.caresAbout}
+            onDraftChange={(value) => setDraft('caresAbout', value)}
+            limitMessage={limits.caresAbout}
+            onLimitMessage={(message) => setLimit('caresAbout', message)}
+          />
+          <StringListField
+            {...listProps}
+            name="ignores"
+            legend="Ignores"
+            hint="Optional"
+            addLabel="Add"
+            draft={drafts.ignores}
+            onDraftChange={(value) => setDraft('ignores', value)}
+            limitMessage={limits.ignores}
+            onLimitMessage={(message) => setLimit('ignores', message)}
+          />
+        </section>
+        <section className="panel">
+          <fieldset
+            id="intensity"
+            tabIndex={-1}
+            className="intensity"
+            aria-invalid={intensityError ? true : undefined}
+            aria-describedby={intensityError ? 'intensity-error' : 'intensity-hint'}
+          >
+            <legend>Intensity</legend>
+            <p id="intensity-hint" className="hint">
+              How strongly the avatar shapes an answer.
             </p>
-          ) : null}
-        </fieldset>
+            <div className="choices">
+              {INTENSITIES.map(([value, label, text]) => (
+                <label key={value} className="choice" htmlFor={`intensity-${value}`}>
+                  <input
+                    id={`intensity-${value}`}
+                    type="radio"
+                    {...register('intensity', { onChange: () => clearServerError('intensity') })}
+                    value={value}
+                  />
+                  <span className="choice-title">
+                    {label}
+                    <IntensityMeter intensity={value} />
+                  </span>
+                  <span className="choice-text">{text}</span>
+                </label>
+              ))}
+            </div>
+            {intensityError ? (
+              <p id="intensity-error" className="field-error" role="alert">
+                {intensityError}
+              </p>
+            ) : null}
+          </fieldset>
+        </section>
         <div className="form-actions">
           <Link className="button button-quiet" to="/avatars">
             Cancel
@@ -521,22 +589,25 @@ function AvatarEditor({ mode, avatar }: { mode: 'create' | 'edit'; avatar?: Avat
       </form>
       {mode === 'edit' && avatar ? (
         <dialog ref={dialogRef} aria-labelledby="delete-title" onClose={() => setDeleting(false)}>
-          <p id="delete-title">Delete {avatar.name}?</p>
+          <p id="delete-title" className="dialog-title">
+            Delete {avatar.name}?
+          </p>
+          <p className="dialog-text">It is removed from the library and cannot be restored.</p>
           {deleteError ? (
             <p className="field-error" role="alert">
               {deleteError}
             </p>
           ) : null}
           <div className="dialog-actions">
+            <button ref={cancelRef} type="button" className="button button-quiet" onClick={closeDelete}>
+              Cancel
+            </button>
             <button type="button" className="button button-danger" onClick={() => void confirmDelete()} disabled={deleting}>
               {deleting ? 'Deleting' : 'Delete'}
-            </button>
-            <button type="button" className="button button-quiet" onClick={closeDelete} autoFocus>
-              Cancel
             </button>
           </div>
         </dialog>
       ) : null}
-    </>
+    </div>
   );
 }

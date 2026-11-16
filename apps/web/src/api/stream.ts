@@ -1,10 +1,27 @@
-import type { AvatarEvent, DeltaEvent, MessageRequest } from '@avatars/contracts/assistant';
-import { zAvatarEvent, zDeltaEvent, zProblem } from '@avatars/contracts/assistant/zod';
+import type {
+  AvatarEvent,
+  DeltaEvent,
+  DraftEvent,
+  EvaluationEvent,
+  MessageRequest,
+  StageEvent,
+} from '@avatars/contracts/assistant';
+import {
+  zAvatarEvent,
+  zDeltaEvent,
+  zDraftEvent,
+  zEvaluationEvent,
+  zProblem,
+  zStageEvent,
+} from '@avatars/contracts/assistant/zod';
 import { assistantApiUrl } from './config';
-import { ProblemError, problemFromResponse, type ProblemDetails } from './problem';
+import { ProblemError, problemFromResponse, statusMessage, type ProblemDetails } from './problem';
 
 export type ChatStreamEvent =
   | { event: 'avatar'; data: AvatarEvent }
+  | { event: 'stage'; data: StageEvent }
+  | { event: 'draft'; data: DraftEvent }
+  | { event: 'evaluation'; data: EvaluationEvent }
   | { event: 'delta'; data: DeltaEvent }
   | { event: 'done' }
   | { event: 'error'; data: ProblemDetails };
@@ -58,8 +75,7 @@ export async function streamMessage(
     );
   } catch (error) {
     if (signal?.aborted) return 'aborted';
-    const message = error instanceof Error ? error.message : 'The request could not be completed.';
-    throw new ProblemError(undefined, message, 0);
+    throw new ProblemError(undefined, statusMessage(0), 0);
   }
 
   if (!response.ok) throw await failedResponse(response);
@@ -83,16 +99,19 @@ export async function streamMessage(
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      const blocks = buffer.split('\n\n');
-      buffer = blocks.pop() ?? '';
+      // A line end can arrive as "\r" in one chunk and "\n" in the next, so a last "\r" waits for what follows.
+      const held = buffer.endsWith('\r') ? '\r' : '';
+      const blocks = buffer
+        .slice(0, buffer.length - held.length)
+        .replace(/\r\n?/g, '\n')
+        .split('\n\n');
+      buffer = (blocks.pop() ?? '') + held;
       for (const block of blocks) emitBlock(block);
     }
   } catch (error) {
     if (signal?.aborted) return 'aborted';
     if (error instanceof ProblemError) throw error;
-    const message = error instanceof Error ? error.message : 'The answer stopped before it finished.';
-    throw new ProblemError(undefined, message, 0);
+    throw new ProblemError(undefined, 'The connection closed before the answer finished.', 0);
   }
 
   buffer += decoder.decode();
@@ -136,6 +155,23 @@ function parseSseBlock(block: string): ChatStreamEvent | null {
       throw new ProblemError(undefined, 'The assistant sent an unreadable answer.', 200);
     }
     return { event: 'delta', data: parsed.data };
+  }
+
+  // A stage, a piece of the draft, or a check result that cannot be read is not
+  // worth failing the answer for.
+  if (eventName === 'draft') {
+    const parsed = zDraftEvent.safeParse(json);
+    return parsed.success ? { event: 'draft', data: parsed.data } : null;
+  }
+
+  if (eventName === 'stage') {
+    const parsed = zStageEvent.safeParse(json);
+    return parsed.success ? { event: 'stage', data: parsed.data } : null;
+  }
+
+  if (eventName === 'evaluation') {
+    const parsed = zEvaluationEvent.safeParse(json);
+    return parsed.success ? { event: 'evaluation', data: parsed.data } : null;
   }
 
   if (eventName === 'done') return { event: 'done' };

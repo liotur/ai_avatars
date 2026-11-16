@@ -1,11 +1,22 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import type { Avatar, Problem } from "../src/types.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
+import { STARTER_AVATARS } from "../src/starters.js";
+import { zAvatarCreateRequest } from "../src/validation.js";
+
+const starterNames = STARTER_AVATARS.map((avatar) => avatar.name);
+
+/** The starters plus the given names, in the order the service lists them. */
+function withStarters(...names: string[]): string[] {
+  return [...starterNames, ...names].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1));
+}
 
 const requiredFields = {
   description: "A practical guide for concrete decisions.",
@@ -81,7 +92,7 @@ describe("avatar manager", () => {
     const listed = await request("/v1/avatars");
     expect(listed.status).toBe(200);
     const list = (await listed.json()) as { items: Avatar[] };
-    expect(list.items.map((item) => item.name)).toEqual(["Field Guide", "Generalist"]);
+    expect(list.items.map((item) => item.name)).toEqual(withStarters("Field Guide"));
 
     const patched = await request(`/v1/avatars/${avatar.id}`, {
       method: "PATCH",
@@ -158,15 +169,15 @@ describe("avatar manager", () => {
     });
   });
 
-  it("lists avatars in case-insensitive name order and seeds Generalist once", async () => {
+  it("lists avatars in case-insensitive name order and seeds the starters once", async () => {
     await postAvatar({ name: "Zebra", intensity: "immersive", createdBy: "assistant" });
     await postAvatar({ name: "mango" });
 
     const listed = await request("/v1/avatars");
     const body = (await listed.json()) as { items: Avatar[] };
-    expect(body.items.map((item) => item.name)).toEqual(["Generalist", "mango", "Zebra"]);
+    expect(body.items.map((item) => item.name)).toEqual(withStarters("mango", "Zebra"));
 
-    const generalist = body.items[0];
+    const generalist = body.items.find((item) => item.name === "Generalist");
     expect(generalist).toMatchObject({
       name: "Generalist",
       description: "A plain assistant for simple factual and how-to questions.",
@@ -174,7 +185,7 @@ describe("avatar manager", () => {
       voice: "Clear and short.",
       caresAbout: ["A correct, direct answer"],
       ignores: [],
-      useWhen: ["Simple factual questions", "How-to questions with one right answer"],
+      useWhen: ["Simple factual questions", "How-to questions with one right answer", "Greetings and small talk"],
       intensity: "subtle",
       createdBy: "user",
     });
@@ -188,11 +199,180 @@ describe("avatar manager", () => {
     try {
       const again = await reopened.app.request("/v1/avatars");
       const stored = (await again.json()) as { items: Avatar[] };
-      expect(stored.items).toHaveLength(3);
-      expect(stored.items[0]?.createdAt).toBe(generalist?.createdAt);
+      expect(stored.items).toHaveLength(starterNames.length + 2);
+      expect(stored.items.find((item) => item.name === "Generalist")?.createdAt).toBe(generalist?.createdAt);
     } finally {
       reopened.close();
     }
+  });
+
+  it("starts a library with avatars that answer in clearly different ways", () => {
+    for (const name of ["Generalist", "Roast Master", "Software Engineer", "QA Tester", "Philosopher", "Psychiatrist"]) {
+      expect(starterNames).toContain(name);
+    }
+    // Each starter must pass the same checks as an avatar a person creates.
+    for (const starter of STARTER_AVATARS) {
+      const checked = zAvatarCreateRequest.safeParse(starter);
+      expect(checked.success, `${starter.name}: ${JSON.stringify(checked.error?.issues)}`).toBe(true);
+      expect(starter.useWhen.length).toBeGreaterThan(0);
+    }
+    expect(new Set(starterNames.map((name) => name.toLowerCase())).size).toBe(starterNames.length);
+    expect(new Set(STARTER_AVATARS.map((avatar) => avatar.intensity)).size).toBe(3);
+  });
+
+  it("does not bring a starter back after it is deleted", async () => {
+    await deleteByName("Roast Master");
+    reopen();
+    expect(await listNames()).toEqual(withStarters().filter((name) => name !== "Roast Master"));
+  });
+
+  it("does not bring the starters back after every avatar is deleted", async () => {
+    await postAvatar({ name: "Short lived" });
+    for (const name of await listNames()) await deleteByName(name);
+    expect(await listNames()).toEqual([]);
+
+    reopen();
+    expect(await listNames()).toEqual([]);
+
+    reopen();
+    expect(await listNames()).toEqual([]);
+  });
+
+  it("adds the starters to an older database and keeps what it holds", async () => {
+    for (const name of await listNames()) await deleteByName(name);
+    await postAvatar({ name: "Keeper" });
+    const own = await postAvatar({ name: "roast master", voice: "My own roaster." });
+    // A file written before the marker existed: rows, and a version of zero.
+    withRawDatabase((raw) => raw.pragma("user_version = 0"));
+
+    reopen();
+    const expected = withStarters("Keeper").map((name) => (name === "Roast Master" ? "roast master" : name));
+    expect(await listNames()).toEqual(expected);
+    // The person's avatar with a starter's name is kept as it was, not replaced.
+    const kept = await request(`/v1/avatars/${own.id}`);
+    expect(((await kept.json()) as Avatar).voice).toBe("My own roaster.");
+    expect(withRawDatabase((raw) => raw.pragma("user_version", { simple: true }))).toBe(1);
+
+    for (const name of await listNames()) await deleteByName(name);
+    reopen();
+    expect(await listNames()).toEqual([]);
+  });
+
+  it.each([
+    { script: "Cyrillic", stored: "Скептик", clash: "скептик", recased: "СКЕПТИК" },
+    { script: "accented", stored: "Über Coach", clash: "über coach", recased: "ÜBER COACH" },
+  ])("treats $script names that differ only by letter case as one name", async (names) => {
+    const first = await postAvatar({ name: names.stored });
+
+    const duplicate = await request("/v1/avatars", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: names.clash, ...requiredFields }),
+    });
+    expect(duplicate.status).toBe(409);
+    expect(await duplicate.json()).toEqual({
+      type: "https://avatar.local/problems/name-taken",
+      title: "Avatar name already in use",
+      status: 409,
+      detail: `An avatar named "${names.clash}" already exists.`,
+    });
+
+    const other = await postAvatar({ name: "Someone else" });
+    const renamed = await patchAvatar(other.id, { name: names.clash });
+    expect(renamed.status).toBe(409);
+    expect(((await renamed.json()) as Problem).type).toBe(
+      "https://avatar.local/problems/name-taken",
+    );
+    expect(await listNames()).toEqual([...withStarters("Someone else"), names.stored]);
+
+    const recased = await patchAvatar(first.id, { name: names.recased });
+    expect(recased.status).toBe(200);
+    expect(((await recased.json()) as Avatar).name).toBe(names.recased);
+  });
+
+  it("treats a decomposed accent and a precomposed one as the same name", async () => {
+    // Written as escapes so the two spellings of the accented letter stay distinct.
+    await postAvatar({ name: "Caf\u00e9 Critic" });
+    const duplicate = await request("/v1/avatars", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "cafe\u0301 critic", ...requiredFields }),
+    });
+    expect(duplicate.status).toBe(409);
+  });
+
+  it("lets an avatar keep its name when older data already holds a clashing one", async () => {
+    const first = await postAvatar({ name: "Скептик" });
+    // Older versions accepted this second row: the column collation folds ASCII only.
+    withRawDatabase((raw) =>
+      raw
+        .prepare(
+          `INSERT INTO avatars
+           SELECT ?, ?, description, perspective, voice, cares_about, ignores, use_when,
+                  intensity, created_by, created_at, updated_at
+           FROM avatars WHERE id = ?`,
+        )
+        .run(randomUUID(), "скептик", first.id),
+    );
+
+    const edited = await patchAvatar(first.id, { name: first.name, voice: "Dry." });
+    expect(edited.status).toBe(200);
+    expect((await edited.json()) as Avatar).toMatchObject({ name: first.name, voice: "Dry." });
+
+    const other = await postAvatar({ name: "Someone else" });
+    const renamed = await patchAvatar(other.id, { name: "СКЕПТИК" });
+    expect(renamed.status).toBe(409);
+  });
+
+  it("asks for a JSON Content-Type instead of listing every field as missing", async () => {
+    const wrongType = {
+      type: "https://avatar.local/problems/validation-failed",
+      title: "Request validation failed",
+      status: 400,
+      detail: "1 field is invalid.",
+      errors: [{ field: "/", message: "Content-Type must be application/json." }],
+    };
+    const form = {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "name=Form&voice=Plain",
+    };
+    // A byte body, unlike a string body, is sent without any Content-Type.
+    const unlabelled = (value: unknown) => ({
+      body: new TextEncoder().encode(JSON.stringify(value)),
+    });
+    const created = await postAvatar({ name: "Editable" });
+
+    const attempts = [
+      await request("/v1/avatars", { method: "POST", ...form }),
+      await request("/v1/avatars", {
+        method: "POST",
+        ...unlabelled({ name: "Unlabelled", ...requiredFields }),
+      }),
+      await request(`/v1/avatars/${created.id}`, { method: "PATCH", ...form }),
+      await request(`/v1/avatars/${created.id}`, {
+        method: "PATCH",
+        ...unlabelled({ voice: "Changed." }),
+      }),
+    ];
+    for (const response of attempts) {
+      expect(response.status).toBe(400);
+      expect(response.headers.get("content-type")).toContain("application/problem+json");
+      expect(await response.json()).toEqual(wrongType);
+    }
+    expect(await listNames()).toEqual(withStarters("Editable"));
+    const unchanged = await request(`/v1/avatars/${created.id}`);
+    expect(((await unchanged.json()) as Avatar).voice).toBe(requiredFields.voice);
+
+    const badId = await request("/v1/avatars/not-a-uuid", { method: "PATCH", ...form });
+    expect(badId.status).toBe(400);
+    expect(((await badId.json()) as Problem).errors?.[0]?.field).toBe("/avatarId");
+
+    const withParameters = await request("/v1/avatars", {
+      method: "POST",
+      headers: { "content-type": "Application/JSON; charset=utf-8" },
+      body: JSON.stringify({ name: "Labelled", ...requiredFields }),
+    });
+    expect(withParameters.status).toBe(201);
   });
 
   it("returns problem details for invalid bodies, ids, and empty patches", async () => {
@@ -317,6 +497,48 @@ describe("avatar manager", () => {
     });
     expect(blankPatch.status).toBe(400);
   });
+
+  // Closes the service and starts it again on the same database file.
+  function reopen(): void {
+    close();
+    const reopened = createApp({
+      databasePath: path.join(directory, "avatars.db"),
+      corsOrigin: "http://localhost:5173",
+      now: () => now,
+    });
+    close = reopened.close;
+    request = (input, init) => Promise.resolve(reopened.app.request(input, init));
+  }
+
+  function withRawDatabase<T>(use: (raw: Database.Database) => T): T {
+    const raw = new Database(path.join(directory, "avatars.db"));
+    try {
+      return use(raw);
+    } finally {
+      raw.close();
+    }
+  }
+
+  async function listNames(): Promise<string[]> {
+    const listed = await request("/v1/avatars");
+    return ((await listed.json()) as { items: Avatar[] }).items.map((item) => item.name);
+  }
+
+  async function deleteByName(name: string): Promise<void> {
+    const listed = await request("/v1/avatars");
+    const { items } = (await listed.json()) as { items: Avatar[] };
+    const avatar = items.find((item) => item.name === name);
+    const deleted = await request(`/v1/avatars/${avatar?.id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(204);
+  }
+
+  function patchAvatar(id: string, patch: Record<string, unknown>): Promise<Response> {
+    return request(`/v1/avatars/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+  }
 
   async function postAvatar(extra: Record<string, unknown>): Promise<Avatar> {
     const response = await request("/v1/avatars", {

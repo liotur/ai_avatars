@@ -12,10 +12,14 @@ info:
     It reads and creates avatars only through the avatar MCP server. It never
     calls the avatar REST API or the database directly.
 
-    A **session** groups the messages of one chat. In this version a session
-    keeps no history: every message is answered on its own. Sessions live in
-    memory and are lost when the assistant restarts; history will attach to the
-    session later without changing these paths.
+    A **session** is one chat. The assistant remembers its turns: each new
+    message is classified and answered with the earlier ones in view, so a
+    follow-up question works and stays with the avatar that answered last.
+    Sessions live in memory. They are lost when the assistant restarts, and the
+    one unused for longest is dropped when there are too many; a message to a
+    session that is gone gets `404`, and the client opens a new one. The
+    conversation is not exposed through this API: the client keeps what it
+    shows.
 
     The answer is streamed. Classification finishes first, then the response
     is `text/event-stream`: one `avatar` event, then `delta` events, then
@@ -36,6 +40,8 @@ security: []
 tags:
   - name: sessions
     description: Open a chat and send messages to it.
+  - name: status
+    description: Whether the assistant can answer right now.
   - name: health
     description: Liveness for local runs and container health checks.
 
@@ -52,6 +58,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+
+  /assistant:
+    get:
+      operationId: getAssistantStatus
+      tags: [status]
+      summary: Whether the assistant can answer
+      description: |
+        The assistant starts even when no language model is configured, so the
+        UI can say what is missing instead of failing. `ready` is `false` until
+        a usable key is set; `detail` then says what to change. The key itself
+        is never returned.
+      responses:
+        "200":
+          description: The current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantStatus"
+              examples:
+                ready:
+                  value:
+                    ready: true
+                    provider: gemini
+                    model: gemini-flash-latest
+                notConfigured:
+                  value:
+                    ready: false
+                    detail: No language model key is set. Put LLM_API_KEY in the .env file and restart.
 
   /sessions:
     post:
@@ -87,19 +121,40 @@ paths:
         1. Lists avatar summaries through MCP (`list_avatars`).
         2. If `avatarId` is given, uses that avatar and skips classification.
            Otherwise the model classifies the message against the summaries
-           and either picks an existing avatar or drafts a new one.
+           and the last turns of the session, and either picks an existing
+           avatar or drafts a new one.
         3. When it drafts a new one, the assistant saves it through MCP
            (`create_avatar`) with `createdBy: assistant`.
         4. Loads the full avatar (`get_avatar`) and builds its system prompt.
-        5. Opens the stream and generates the answer.
+        5. Opens the stream and generates the answer, with the session's
+           earlier turns as context. The exchange is then remembered, including
+           the part of an answer that arrived before it was stopped or failed.
 
         Failures in steps 1–4 are normal HTTP errors and no stream is opened.
         The `200` body is `text/event-stream`. Each event is two lines,
         `event:` and `data:` (one JSON object), then a blank line. Order:
 
         1. `avatar`, once. Data is `AvatarEvent`.
-        2. `delta`, zero or more times. Data is `DeltaEvent`.
-        3. `done`, once, then the stream closes. Data is `DoneEvent`.
+        2. `stage`, zero or more times. Data is `StageEvent`. Sent only when
+           answers are checked, to say what the assistant is doing.
+        3. `draft`, zero or more times. Data is `DraftEvent`. Sent only when
+           answers are checked: the draft as it is written, to show as work
+           in progress. It is not the answer.
+        4. `evaluation`, at most once. Data is `EvaluationEvent`. Sent only
+           when answers are checked, before any `delta`.
+        5. `delta`, zero or more times. Data is `DeltaEvent`. The answer.
+        6. `done`, once, then the stream closes. Data is `DoneEvent`.
+
+        **The answer check.** Unless it is switched off, the avatar's first
+        draft is not yet the answer. It is streamed as `draft` events while
+        it is written. A second model call then checks that it answers the
+        question, is sound, follows the avatar's stance, and uses the wording
+        the avatar's intensity calls for. A draft that passes is confirmed as
+        the answer in one `delta` with the same text. A draft that fails is
+        rewritten once by the avatar, with the checker's advice, and the
+        rewrite arrives as `delta` events as it is written. When the check
+        cannot run, the draft becomes the answer with the verdict `skipped`.
+        A client that reads only `delta` therefore shows checked text only.
 
         If the answer fails after the stream has opened, an `error` event
         (data is `Problem`) is sent instead of `done`, and the stream closes.
@@ -147,6 +202,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "502":
           $ref: "#/components/responses/UpstreamFailed"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
 
 components:
   parameters:
@@ -209,13 +266,28 @@ components:
                 type: https://assistant.local/problems/llm-failed
                 title: Language model call failed
                 status: 502
-                detail: The provider returned 401. Check LLM_API_KEY.
+                detail: Google Gemini returned 401. Check LLM_API_KEY, or set LLM_PROVIDER if the key belongs to another service.
             mcp:
               value:
                 type: https://assistant.local/problems/avatar-mcp-failed
                 title: Avatar MCP server call failed
                 status: 502
-                detail: list_avatars did not respond within 5 seconds.
+                detail: list_avatars did not respond within 10 seconds.
+    NotConfigured:
+      description: |
+        No language model is configured, so the message cannot be answered.
+        `GET /assistant` reports the same state.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            noKey:
+              value:
+                type: https://assistant.local/problems/llm-not-configured
+                title: Language model is not configured
+                status: 503
+                detail: No language model key is set. Put LLM_API_KEY in the .env file and restart.
 
   schemas:
     # ---------- Public resources ----------
@@ -270,6 +342,55 @@ components:
           type: string
           minLength: 1
 
+    StageEvent:
+      type: object
+      description: JSON `data` of a `stage` event. What the assistant is doing before text can be shown.
+      additionalProperties: false
+      required: [stage]
+      properties:
+        stage:
+          type: string
+          enum: [drafting, checking, revising]
+          description: |
+            - `drafting`: the avatar is writing a draft; `draft` events follow.
+            - `checking`: the draft is being checked.
+            - `revising`: the draft failed, and the avatar is writing it again.
+
+    DraftEvent:
+      type: object
+      description: |
+        JSON `data` of a `draft` event. Append `text` to the draft so far. The
+        draft is work in progress: the answer is what the `delta` events carry.
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+
+    EvaluationEvent:
+      type: object
+      description: JSON `data` of the `evaluation` event. The result of checking the draft.
+      additionalProperties: false
+      required: [verdict, failed]
+      properties:
+        verdict:
+          type: string
+          enum: [passed, revised, skipped]
+          description: |
+            - `passed`: the draft passed every check and is shown as written.
+            - `revised`: at least one check failed; the answer that follows is the rewrite.
+            - `skipped`: the check could not be run; the draft is shown unchecked.
+        failed:
+          type: array
+          description: The checks the draft failed. Empty unless the verdict is `revised`.
+          items:
+            type: string
+            enum: [answers, sound, stance, voice]
+        note:
+          type: string
+          description: What the checker asked to be changed, or why the check was skipped.
+
     DoneEvent:
       type: object
       description: JSON `data` of the `done` event. The answer is complete.
@@ -322,6 +443,24 @@ components:
         reason:
           type: string
           description: The model's one-sentence reason. Present for `chosen` and `created`.
+
+    AssistantStatus:
+      type: object
+      additionalProperties: false
+      required: [ready]
+      properties:
+        ready:
+          type: boolean
+          description: Whether a language model is configured, so messages can be answered.
+        provider:
+          type: string
+          description: Name of the configured provider, for example `gemini`. Present when ready.
+        model:
+          type: string
+          description: Model that classifies and answers. Present when ready.
+        detail:
+          type: string
+          description: When not ready, what to change. Never contains the key.
 
     Health:
       type: object

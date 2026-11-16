@@ -61,6 +61,15 @@ export function llmFailed(detail: string): HttpProblem {
   });
 }
 
+export function llmNotConfigured(detail: string): HttpProblem {
+  return new HttpProblem({
+    type: "https://assistant.local/problems/llm-not-configured",
+    title: "Language model is not configured",
+    status: 503,
+    detail,
+  });
+}
+
 export function mcpFailed(detail: string): HttpProblem {
   return new HttpProblem({
     type: "https://assistant.local/problems/avatar-mcp-failed",
