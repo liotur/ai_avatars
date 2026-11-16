@@ -1,8 +1,34 @@
-# LLM configuration
+# Language model configuration
 
-Only the **assistant** holds the API key. The browser, avatar manager, and MCP server never see it.
+The assistant calls **Amdocs AutoX**. Only the assistant reads the key. It is never sent to the browser, the avatar manager, or the MCP server, and it is removed from every error message and log line. (The demo container runs all the services together, so it is not an isolation boundary; in a real deployment only the assistant's image is given the key.)
 
-This project calls the Amdocs AutoX proxy. The protocol is the OpenAI **Responses** API, not chat completions.
+## What to set
+
+Three things, in `.env` at the project root (copy `.env.example`):
+
+```
+AUTOX_USERNAME=your-user-name
+AUTOX_KEY=your-key
+LLM_MODEL=gpt-4.1-mini
+```
+
+`LLM_MODEL` already has a default. `.env.example` lists other models in comments; use one your AutoX account offers. One model does all three calls: choosing the avatar, writing the answer, and checking it.
+
+After changing `.env`, start the app again (`docker compose up -d`, or restart `pnpm dev`).
+
+## What AutoX needs around it
+
+- **The Amdocs network.** AutoX answers only on the VPN.
+- **Amdocs certificate authorities.** AutoX's certificate is signed by an Amdocs authority that a stock Linux image and a stock Node do not know. Without it a message fails with "Could not reach the provider", although the network is fine.
+  - Docker: put the authorities in `certs/` as described in [certs/README.md](../certs/README.md). The container reads that folder at start.
+  - `pnpm dev`: the assistant is started with Node's `--use-system-ca`, so it trusts whatever the operating system trusts. That needs Node 22.15 or later.
+- **No web proxy for AutoX.** AutoX is an internal address. The assistant does not use `HTTPS_PROXY`, so nothing needs changing; a `curl` test from a shell that has a proxy set needs `--noproxy '*'`.
+
+Building the image is the opposite case: it needs the internet (Docker Hub, npm, Debian). On a network that reaches the internet only through a proxy, give that proxy to Docker before building.
+
+## The request
+
+AutoX speaks the OpenAI **Responses** API with its own headers:
 
 ```
 POST {AUTOX_BASE_URL}/responses?api-version={AUTOX_API_VERSION}
@@ -16,29 +42,44 @@ Content-Type: application/json
 {
   "model": "gpt-4.1-mini",
   "input": [
-    { "role": "user", "content": [{ "type": "input_text", "text": "ping" }] }
+    { "role": "system", "content": [{ "type": "input_text", "text": "..." }] },
+    { "role": "user", "content": [{ "type": "input_text", "text": "..." }] }
   ]
 }
 ```
 
-A system prompt is an `input` item with `"role": "system"` and the same `input_text` content. Streaming uses the Responses API stream, and the text shown to the user is taken from the output text deltas.
+Earlier answers of the same chat are sent as `"role": "assistant"` items whose content type is `output_text`. The two calls that return a decision (choosing the avatar, checking the draft) are sent with `"temperature": 0`, so the same message is routed the same way each time; a model that accepts only its default temperature is asked again without it. The answer is requested with `"stream": true`, and the text is taken from the `response.output_text.delta` events.
 
-## Environment variables
+## Settings
 
-| Variable | Required | Default |
+| Variable | Meaning | Default |
 |---|---|---|
-| `LLM_PROVIDER` | yes | `autox` |
-| `AUTOX_KEY` | yes | — |
-| `AUTOX_USERNAME` | yes | — |
-| `AUTOX_BASE_URL` | no | `https://chat.autox.corp.amdocs.azr/api/v1/proxy/openai` |
-| `AUTOX_API_VERSION` | no | `2025-03-01-preview` |
-| `AUTOX_APPLICATION` | no | `autox-merged-ui` |
-| `LLM_MODEL` | no | `gpt-4.1-mini` |
+| `AUTOX_USERNAME` | Sent as the `username` header | none; required |
+| `AUTOX_KEY` | Sent as the `api-key` header | none; required |
+| `LLM_MODEL` | The model | `gpt-4.1-mini` |
+| `AUTOX_BASE_URL` | Where AutoX is served from | `https://chat.autox.corp.amdocs.azr/api/v1/proxy/openai` |
+| `AUTOX_API_VERSION` | The `api-version` query parameter | `2025-03-01-preview` |
+| `AUTOX_APPLICATION` | Sent as the `application` header | `autox-merged-ui` |
+| `ANSWER_CHECK` | `off` shows answers as they are written, without checking them first | on |
 
-`LLM_API_KEY` is accepted as a fallback for `AUTOX_KEY`. `USERNAME` is accepted as a fallback for `AUTOX_USERNAME`, so an existing shell export keeps working. Empty `AUTOX_*` values fall through to those aliases. The key is never logged.
+`LLM_USERNAME`, then the shell's `USERNAME`, stand in for an empty `AUTOX_USERNAME`.
 
-One model does both the classification call and the answer. There is no separate classifier model.
+## When the model is not set up
 
-## Startup
+The assistant starts anyway and logs the reason. `GET /v1/assistant` returns `{"ready": false, "detail": "..."}`, a message is refused with `503` and the same detail, and the chat page shows it. A wrong key shows up on the first message as `502`, naming the provider that refused it and the setting to check.
 
-The assistant reads the process environment (and a local `.env` when one exists), checks the values with Zod, and refuses to start if the key, username, base URL, or model is missing.
+## Without AutoX
+
+To run the project away from the Amdocs network, the assistant can call another provider that speaks OpenAI **chat completions** (`POST {base}/chat/completions`, `Authorization: Bearer {LLM_API_KEY}`). Leave `AUTOX_KEY` empty and set `LLM_API_KEY`; the provider is recognised from the start of the key.
+
+| `LLM_PROVIDER` | Recognised from a key starting with | Default model | Also needs |
+|---|---|---|---|
+| `gemini` | `AIza` | `gemini-flash-latest` | — |
+| `openai` | `sk-` | `gpt-4.1-mini` | — |
+| `openrouter` | `sk-or-` | none | `LLM_MODEL` |
+| `ollama` | not from a key (no key needed) | none | `LLM_PROVIDER=ollama`, `LLM_MODEL` |
+| `custom` | not from a key | none | `LLM_PROVIDER=custom`, `LLM_BASE_URL`, `LLM_MODEL` |
+
+`sk-or-` is checked before `sk-`. Any other key that starts with `sk-` is taken to be OpenAI's and would be sent there, so for another service with such keys set `LLM_PROVIDER=custom` with `LLM_BASE_URL` and `LLM_MODEL`. A key that starts with `sk-ant-` is not sent anywhere until the provider is named. `LLM_BASE_URL` overrides a provider's address and must start with `http://` or `https://`.
+
+These routes share all their code with the AutoX route except the request format (`apps/assistant/src/chat.ts` and `autox.ts`; the shared part is `model.ts`). They are covered by tests against a stand-in provider, and have not been run against the real services from this project. AutoX has, with `gpt-4.1-mini`.
