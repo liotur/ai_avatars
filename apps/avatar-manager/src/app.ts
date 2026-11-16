@@ -1,6 +1,6 @@
 import { zAvatar, zAvatarList, zHealth } from "@avatars/contracts/avatar/zod";
 import { zValidator } from "@hono/zod-validator";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
@@ -27,6 +27,19 @@ function rejectInvalid(
   if (result.success) return undefined;
   return validationFailed(c, fieldErrorsFromIssues(result.error?.issues ?? []));
 }
+
+// The same rule the json validator applies before it reads a body.
+const jsonMediaType = /^application\/([\w.-]+\+)?json$/;
+
+// The json validator reads a body of any other type as {}, which would report
+// every field as missing instead of the real cause.
+const requireJsonBody: MiddlewareHandler = async (c, next) => {
+  const [mediaType = ""] = (c.req.header("Content-Type") ?? "").split(";");
+  if (!jsonMediaType.test(mediaType.trim().toLowerCase())) {
+    return validationFailed(c, [{ field: "/", message: "Content-Type must be application/json." }]);
+  }
+  await next();
+};
 
 export function createApp(options: CreateAppOptions) {
   const store = openDatabase({
@@ -70,13 +83,18 @@ export function createApp(options: CreateAppOptions) {
 
   app.get("/avatars", (c) => c.json(zAvatarList.parse({ items: store.list() })));
 
-  app.post("/avatars", zValidator("json", zAvatarCreateRequest, rejectInvalid), (c) => {
-    const body = c.req.valid("json");
-    const created = store.create(body);
-    if (!created.ok) return nameTakenProblem(c, created.name);
-    c.header("Location", `/v1/avatars/${created.avatar.id}`);
-    return c.json(zAvatar.parse(created.avatar), 201);
-  });
+  app.post(
+    "/avatars",
+    requireJsonBody,
+    zValidator("json", zAvatarCreateRequest, rejectInvalid),
+    (c) => {
+      const body = c.req.valid("json");
+      const created = store.create(body);
+      if (!created.ok) return nameTakenProblem(c, created.name);
+      c.header("Location", `/v1/avatars/${created.avatar.id}`);
+      return c.json(zAvatar.parse(created.avatar), 201);
+    },
+  );
 
   app.get("/avatars/:avatarId", zValidator("param", zAvatarIdParam, rejectInvalid), (c) => {
     const { avatarId } = c.req.valid("param");
@@ -88,6 +106,7 @@ export function createApp(options: CreateAppOptions) {
   app.patch(
     "/avatars/:avatarId",
     zValidator("param", zAvatarIdParam, rejectInvalid),
+    requireJsonBody,
     zValidator("json", zAvatarUpdateRequest, rejectInvalid),
     (c) => {
       const { avatarId } = c.req.valid("param");
