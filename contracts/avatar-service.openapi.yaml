@@ -1,0 +1,617 @@
+openapi: 3.1.0
+
+info:
+  title: Avatar Service API
+  version: 0.1.0
+  summary: A durable place to define avatars that people edit and assistants retrieve.
+  description: |
+    An **avatar** is a stance an AI assistant can take when it answers:
+    a way of seeing the problem, a way of speaking, a set of things it cares
+    about and a set of things it ignores.
+
+    This service only stores and serves avatars. It does not call a language
+    model. Its clients are the web UI (people create, inspect and edit avatars)
+    and the avatar MCP server (which exposes a subset of these operations as
+    tools to the assistant).
+
+    First version: one user, no authentication, tens of avatars.
+  license:
+    name: UNLICENSED
+    identifier: UNLICENSED
+
+servers:
+  - url: http://localhost:3000/v1
+    description: Local development
+
+# No authentication in the first version. Stated explicitly so it is a decision, not an omission.
+security: []
+
+tags:
+  - name: avatars
+    description: Create, inspect, edit and delete avatars.
+  - name: health
+    description: Liveness for local runs and container health checks.
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness check
+      responses:
+        "200":
+          description: The service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /avatars:
+    get:
+      operationId: listAvatars
+      tags: [avatars]
+      summary: List all avatars
+      description: |
+        Returns every avatar in full, ordered by name. There is no paging or
+        search in the first version because the expected volume is tens of
+        avatars; the `items` wrapper leaves room to add both without breaking
+        clients.
+      responses:
+        "200":
+          description: All avatars, ordered by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvatarList"
+              examples:
+                one:
+                  summary: One avatar
+                  value:
+                    items:
+                      - id: 3f0a8a52-6f43-4a53-9d0e-1b6f0c1c2a77
+                        name: Skeptical CFO
+                        description: A finance chief who has seen many optimistic plans and funds only the ones with numbers.
+                        perspective: >-
+                          Reads every proposal as a claim on limited cash. Looks first for the
+                          cost, the payback period, and what happens if the key assumption is
+                          wrong.
+                        voice: >-
+                          Dry and brief. Numbers before adjectives. Ends with a clear yes, no,
+                          or "come back with X".
+                        caresAbout:
+                          - Cash runway
+                          - Payback period
+                          - Downside risk
+                        ignores:
+                          - Vision statements
+                          - Technical elegance
+                          - What competitors are announcing
+                        useWhen:
+                          - Budget requests and business cases
+                          - Pricing and hiring decisions
+                        intensity: balanced
+                        createdBy: user
+                        createdAt: "2026-11-16T10:31:00Z"
+                        updatedAt: "2026-11-16T10:31:00Z"
+    post:
+      operationId: createAvatar
+      tags: [avatars]
+      summary: Create an avatar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AvatarCreate"
+            examples:
+              futureMe:
+                $ref: "#/components/examples/NewFutureMe"
+              skepticalCfo:
+                $ref: "#/components/examples/NewSkepticalCfo"
+      responses:
+        "201":
+          description: The avatar was created.
+          headers:
+            Location:
+              description: Path of the new avatar.
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Avatar"
+              examples:
+                futureMe:
+                  $ref: "#/components/examples/StoredFutureMe"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "409":
+          $ref: "#/components/responses/NameTaken"
+
+  /avatars/{avatarId}:
+    parameters:
+      - $ref: "#/components/parameters/AvatarId"
+    get:
+      operationId: getAvatar
+      tags: [avatars]
+      summary: Get one avatar
+      responses:
+        "200":
+          description: The avatar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Avatar"
+              examples:
+                skepticalCfo:
+                  $ref: "#/components/examples/StoredSkepticalCfo"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateAvatar
+      tags: [avatars]
+      summary: Edit an avatar
+      description: |
+        Partial update. Send only the fields to change; fields left out keep
+        their current value. A list field (`caresAbout`, `ignores`, `useWhen`)
+        replaces the whole list. `createdBy` cannot be changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AvatarUpdate"
+            examples:
+              turnItDown:
+                summary: Make the avatar shape answers less
+                value:
+                  intensity: subtle
+              rewriteVoice:
+                summary: Change how it speaks and what it ignores
+                value:
+                  voice: Blunt. One sentence per point. No greetings.
+                  ignores:
+                    - Vision statements
+                    - Technical elegance
+      responses:
+        "200":
+          description: The avatar after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Avatar"
+              examples:
+                skepticalCfo:
+                  $ref: "#/components/examples/StoredSkepticalCfo"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/NameTaken"
+    delete:
+      operationId: deleteAvatar
+      tags: [avatars]
+      summary: Delete an avatar
+      responses:
+        "204":
+          description: The avatar was deleted.
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    AvatarId:
+      name: avatarId
+      in: path
+      required: true
+      description: Identifier the service assigned when the avatar was created.
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    ValidationFailed:
+      description: The request does not match this contract.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            missingField:
+              value:
+                type: https://avatar.local/problems/validation-failed
+                title: Request validation failed
+                status: 400
+                detail: 1 field is invalid.
+                errors:
+                  - field: /caresAbout
+                    message: must contain at least 1 item
+    NotFound:
+      description: No avatar has this identifier.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            notFound:
+              value:
+                type: https://avatar.local/problems/avatar-not-found
+                title: Avatar not found
+                status: 404
+                detail: No avatar with id 3f0a8a52-6f43-4a53-9d0e-1b6f0c1c2a77.
+    NameTaken:
+      description: Another avatar already uses this name.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            nameTaken:
+              value:
+                type: https://avatar.local/problems/name-taken
+                title: Avatar name already in use
+                status: 409
+                detail: An avatar named "Skeptical CFO" already exists.
+
+  schemas:
+    # ---------- The resource ----------
+
+    Avatar:
+      type: object
+      description: A stored avatar, as the service returns it.
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - perspective
+        - voice
+        - caresAbout
+        - ignores
+        - useWhen
+        - intensity
+        - createdBy
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Assigned by the service. Never changes.
+        name:
+          $ref: "#/components/schemas/AvatarName"
+        description:
+          $ref: "#/components/schemas/AvatarDescription"
+        perspective:
+          $ref: "#/components/schemas/Perspective"
+        voice:
+          $ref: "#/components/schemas/Voice"
+        caresAbout:
+          $ref: "#/components/schemas/CaresAbout"
+        ignores:
+          $ref: "#/components/schemas/Ignores"
+        useWhen:
+          $ref: "#/components/schemas/UseWhen"
+        intensity:
+          $ref: "#/components/schemas/Intensity"
+        createdBy:
+          $ref: "#/components/schemas/CreatedBy"
+        createdAt:
+          type: string
+          format: date-time
+          description: When the avatar was created (UTC).
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the avatar was last changed (UTC). Equals `createdAt` until the first edit.
+
+    AvatarCreate:
+      type: object
+      description: What a client sends to create an avatar.
+      additionalProperties: false
+      required:
+        - name
+        - description
+        - perspective
+        - voice
+        - caresAbout
+      properties:
+        name:
+          $ref: "#/components/schemas/AvatarName"
+        description:
+          $ref: "#/components/schemas/AvatarDescription"
+        perspective:
+          $ref: "#/components/schemas/Perspective"
+        voice:
+          $ref: "#/components/schemas/Voice"
+        caresAbout:
+          $ref: "#/components/schemas/CaresAbout"
+        ignores:
+          $ref: "#/components/schemas/Ignores"
+          default: []
+        useWhen:
+          $ref: "#/components/schemas/UseWhen"
+          default: []
+        intensity:
+          $ref: "#/components/schemas/Intensity"
+          default: balanced
+        createdBy:
+          $ref: "#/components/schemas/CreatedBy"
+          default: user
+
+    AvatarUpdate:
+      type: object
+      description: |
+        A partial change to an avatar. Every field is optional, at least one
+        must be present.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          $ref: "#/components/schemas/AvatarName"
+        description:
+          $ref: "#/components/schemas/AvatarDescription"
+        perspective:
+          $ref: "#/components/schemas/Perspective"
+        voice:
+          $ref: "#/components/schemas/Voice"
+        caresAbout:
+          $ref: "#/components/schemas/CaresAbout"
+        ignores:
+          $ref: "#/components/schemas/Ignores"
+        useWhen:
+          $ref: "#/components/schemas/UseWhen"
+        intensity:
+          $ref: "#/components/schemas/Intensity"
+
+    AvatarList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Avatar"
+
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    # ---------- The fields of an avatar ----------
+
+    AvatarName:
+      type: string
+      minLength: 1
+      maxLength: 60
+      description: |
+        What people call the avatar. Unique among avatars, compared without
+        regard to letter case, so that naming an avatar always identifies one.
+      examples: ["Skeptical CFO", "Future me at 80"]
+
+    AvatarDescription:
+      type: string
+      minLength: 1
+      maxLength: 280
+      description: |
+        One or two sentences saying who this is. Shown in lists, and the first
+        thing an assistant reads when deciding which avatar fits a question.
+
+    Perspective:
+      type: string
+      minLength: 1
+      maxLength: 1000
+      description: |
+        The way of seeing the problem: what the avatar looks at first and how
+        it judges what it sees.
+
+    Voice:
+      type: string
+      minLength: 1
+      maxLength: 1000
+      description: |
+        The way of speaking: tone, sentence length, vocabulary, habits of form.
+
+    CaresAbout:
+      type: array
+      minItems: 1
+      maxItems: 10
+      uniqueItems: true
+      items:
+        $ref: "#/components/schemas/ShortText"
+      description: |
+        What the avatar pays attention to, most important first. Order matters:
+        when two concerns compete, the earlier one wins.
+
+    Ignores:
+      type: array
+      maxItems: 10
+      uniqueItems: true
+      items:
+        $ref: "#/components/schemas/ShortText"
+      description: |
+        What the avatar deliberately leaves out of its answers, even when it is
+        relevant. May be empty.
+
+    UseWhen:
+      type: array
+      maxItems: 10
+      uniqueItems: true
+      items:
+        $ref: "#/components/schemas/ShortText"
+      description: |
+        Situations or kinds of question this avatar is meant for. People do not
+        need it; it exists so an assistant can choose an avatar when none was
+        named, and can tell when no avatar fits. May be empty.
+
+    Intensity:
+      type: string
+      enum: [subtle, balanced, immersive]
+      description: |
+        How far the avatar shapes an answer.
+
+        - `subtle`: its priorities decide what the answer covers; the wording
+          stays the assistant's own.
+        - `balanced`: its priorities and its voice both apply.
+        - `immersive`: the answer is fully in character, in the first person.
+
+    CreatedBy:
+      type: string
+      enum: [user, assistant]
+      description: |
+        Who made the avatar. `assistant` marks one an assistant created because
+        no existing avatar fit, so a person can find and review it. Set at
+        creation and never changed.
+
+    ShortText:
+      type: string
+      minLength: 1
+      maxLength: 200
+
+    # ---------- Errors (RFC 9457 problem details) ----------
+
+    Problem:
+      type: object
+      description: An error, in RFC 9457 "problem details" form.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Stable identifier of the kind of problem.
+        title:
+          type: string
+          description: Short summary of the kind of problem. The same for every occurrence.
+        status:
+          type: integer
+          description: The HTTP status code.
+        detail:
+          type: string
+          description: What went wrong this time.
+        errors:
+          type: array
+          description: Present on validation failures; one entry per invalid field.
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, message]
+            properties:
+              field:
+                type: string
+                description: JSON Pointer to the invalid field, for example `/caresAbout/0`.
+              message:
+                type: string
+
+  examples:
+    NewFutureMe:
+      summary: An identity that is not a job
+      value:
+        name: Future me at 80
+        description: Yourself at eighty, looking back kindly on the decision you are facing now.
+        perspective: >-
+          Judges every choice by how it will look across decades. Asks what you
+          would regret not having tried, and what will not matter at all.
+        voice: >-
+          Warm and unhurried, a little amused. Speaks as "we". Tells a short
+          story from "our" life instead of listing points.
+        caresAbout:
+          - The people you will still love in forty years
+          - Health and energy
+          - Not leaving the interesting thing untried
+        ignores:
+          - Status and titles
+          - Short-term embarrassment
+          - This quarter's deadline
+        useWhen:
+          - Big life or career decisions
+          - Feeling anxious about a choice that seems urgent
+        intensity: immersive
+    NewSkepticalCfo:
+      summary: A work role
+      value:
+        name: Skeptical CFO
+        description: A finance chief who has seen many optimistic plans and funds only the ones with numbers.
+        perspective: >-
+          Reads every proposal as a claim on limited cash. Looks first for the
+          cost, the payback period, and what happens if the key assumption is
+          wrong.
+        voice: >-
+          Dry and brief. Numbers before adjectives. Ends with a clear yes, no,
+          or "come back with X".
+        caresAbout:
+          - Cash runway
+          - Payback period
+          - Downside risk
+        ignores:
+          - Vision statements
+          - Technical elegance
+          - What competitors are announcing
+        useWhen:
+          - Budget requests and business cases
+          - Pricing and hiring decisions
+    StoredFutureMe:
+      summary: A stored avatar
+      value:
+        id: 8c9f1f0e-2a51-4d53-b0c7-5d0c8f6f1a11
+        name: Future me at 80
+        description: Yourself at eighty, looking back kindly on the decision you are facing now.
+        perspective: >-
+          Judges every choice by how it will look across decades. Asks what you
+          would regret not having tried, and what will not matter at all.
+        voice: >-
+          Warm and unhurried, a little amused. Speaks as "we". Tells a short
+          story from "our" life instead of listing points.
+        caresAbout:
+          - The people you will still love in forty years
+          - Health and energy
+          - Not leaving the interesting thing untried
+        ignores:
+          - Status and titles
+          - Short-term embarrassment
+          - This quarter's deadline
+        useWhen:
+          - Big life or career decisions
+          - Feeling anxious about a choice that seems urgent
+        intensity: immersive
+        createdBy: user
+        createdAt: "2026-11-16T10:30:00Z"
+        updatedAt: "2026-11-16T10:30:00Z"
+    StoredSkepticalCfo:
+      summary: A stored avatar, with defaults filled in
+      value:
+        id: 3f0a8a52-6f43-4a53-9d0e-1b6f0c1c2a77
+        name: Skeptical CFO
+        description: A finance chief who has seen many optimistic plans and funds only the ones with numbers.
+        perspective: >-
+          Reads every proposal as a claim on limited cash. Looks first for the
+          cost, the payback period, and what happens if the key assumption is
+          wrong.
+        voice: >-
+          Dry and brief. Numbers before adjectives. Ends with a clear yes, no,
+          or "come back with X".
+        caresAbout:
+          - Cash runway
+          - Payback period
+          - Downside risk
+        ignores:
+          - Vision statements
+          - Technical elegance
+          - What competitors are announcing
+        useWhen:
+          - Budget requests and business cases
+          - Pricing and hiring decisions
+        intensity: balanced
+        createdBy: user
+        createdAt: "2026-11-16T10:31:00Z"
+        updatedAt: "2026-11-16T10:31:00Z"

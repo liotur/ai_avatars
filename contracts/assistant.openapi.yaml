@@ -1,0 +1,361 @@
+openapi: 3.1.0
+
+info:
+  title: Assistant API
+  version: 0.1.0
+  summary: Answers a message as the avatar that fits it.
+  description: |
+    The assistant receives a message, decides which avatar should answer it
+    (or drafts and saves a new avatar when none fits), and answers as that
+    avatar.
+
+    It reads and creates avatars only through the avatar MCP server. It never
+    calls the avatar REST API or the database directly.
+
+    A **session** groups the messages of one chat. In this version a session
+    keeps no history: every message is answered on its own. Sessions live in
+    memory and are lost when the assistant restarts; history will attach to the
+    session later without changing these paths.
+
+    The answer is streamed. Classification finishes first, then the response
+    is `text/event-stream`: one `avatar` event, then `delta` events, then
+    `done`.
+
+    First version: one user, no authentication.
+  license:
+    name: UNLICENSED
+    identifier: UNLICENSED
+
+servers:
+  - url: http://localhost:3002/v1
+    description: Local development
+
+# No authentication in the first version. Stated explicitly so it is a decision, not an omission.
+security: []
+
+tags:
+  - name: sessions
+    description: Open a chat and send messages to it.
+  - name: health
+    description: Liveness for local runs and container health checks.
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness check
+      responses:
+        "200":
+          description: The service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /sessions:
+    post:
+      operationId: createSession
+      tags: [sessions]
+      summary: Open a chat session
+      description: Takes no body. The UI calls this once when the assistant page opens.
+      responses:
+        "201":
+          description: The session was created.
+          headers:
+            Location:
+              description: Path of the new session.
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+
+  /sessions/{sessionId}/messages:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: sendMessage
+      tags: [sessions]
+      summary: Send a message and stream the avatar's answer
+      description: |
+        Runs the assistant loop for one message. The same model classifies and
+        answers.
+
+        1. Lists avatar summaries through MCP (`list_avatars`).
+        2. If `avatarId` is given, uses that avatar and skips classification.
+           Otherwise the model classifies the message against the summaries
+           and either picks an existing avatar or drafts a new one.
+        3. When it drafts a new one, the assistant saves it through MCP
+           (`create_avatar`) with `createdBy: assistant`.
+        4. Loads the full avatar (`get_avatar`) and builds its system prompt.
+        5. Opens the stream and generates the answer.
+
+        Failures in steps 1–4 are normal HTTP errors and no stream is opened.
+        The `200` body is `text/event-stream`. Each event is two lines,
+        `event:` and `data:` (one JSON object), then a blank line. Order:
+
+        1. `avatar`, once. Data is `AvatarEvent`.
+        2. `delta`, zero or more times. Data is `DeltaEvent`.
+        3. `done`, once, then the stream closes. Data is `DoneEvent`.
+
+        If the answer fails after the stream has opened, an `error` event
+        (data is `Problem`) is sent instead of `done`, and the stream closes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageRequest"
+            examples:
+              auto:
+                summary: Let the assistant choose
+                value:
+                  content: Should I ask for budget to hire two more engineers next quarter?
+              explicit:
+                summary: Ask a specific avatar
+                value:
+                  content: Should I take the job in Berlin?
+                  avatarId: 8c9f1f0e-2a51-4d53-b0c7-5d0c8f6f1a11
+      responses:
+        "200":
+          description: The avatar, then the answer as it is generated.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                chosen:
+                  summary: An existing avatar answers
+                  value: |
+                    event: avatar
+                    data: {"avatar":{"id":"3f0a8a52-6f43-4a53-9d0e-1b6f0c1c2a77","name":"Skeptical CFO","description":"A finance chief who has seen many optimistic plans and funds only the ones with numbers.","intensity":"balanced","createdBy":"user"},"selection":{"mode":"chosen","reason":"A hiring budget request is a business case."}}
+
+                    event: delta
+                    data: {"text":"Two engineers cost about $400k a year loaded. "}
+
+                    event: delta
+                    data: {"text":"What do they ship, and when does it pay back?"}
+
+                    event: done
+                    data: {"id":"5d1c7b8e-0f2a-4c3b-9e8d-7a6b5c4d3e2f","createdAt":"2026-11-16T11:02:00Z"}
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/UpstreamFailed"
+
+components:
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      description: Identifier returned by `createSession`.
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    ValidationFailed:
+      description: The request does not match this contract.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            emptyMessage:
+              value:
+                type: https://assistant.local/problems/validation-failed
+                title: Request validation failed
+                status: 400
+                detail: 1 field is invalid.
+                errors:
+                  - field: /content
+                    message: must NOT have fewer than 1 characters
+    NotFound:
+      description: The session does not exist, or the requested avatar does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            sessionNotFound:
+              value:
+                type: https://assistant.local/problems/session-not-found
+                title: Session not found
+                status: 404
+                detail: No session with id 0b6e2f7a-3c1d-4e5f-8a9b-1c2d3e4f5a6b. Open a new one.
+            avatarNotFound:
+              value:
+                type: https://assistant.local/problems/avatar-not-found
+                title: Avatar not found
+                status: 404
+                detail: No avatar with id 8c9f1f0e-2a51-4d53-b0c7-5d0c8f6f1a11.
+    UpstreamFailed:
+      description: |
+        The language model or the avatar MCP server failed, or the model
+        returned an unusable classification after one retry.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            llm:
+              value:
+                type: https://assistant.local/problems/llm-failed
+                title: Language model call failed
+                status: 502
+                detail: The provider returned 401. Check LLM_API_KEY.
+            mcp:
+              value:
+                type: https://assistant.local/problems/avatar-mcp-failed
+                title: Avatar MCP server call failed
+                status: 502
+                detail: list_avatars did not respond within 5 seconds.
+
+  schemas:
+    # ---------- Public resources ----------
+
+    Session:
+      type: object
+      additionalProperties: false
+      required: [id, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    MessageRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: What the user asked.
+        avatarId:
+          type: string
+          format: uuid
+          description: |
+            Answer as this avatar and skip classification. Leave out to let the
+            assistant choose.
+
+    AvatarEvent:
+      type: object
+      description: JSON `data` of the `avatar` event. Sent once, before any text.
+      additionalProperties: false
+      required: [avatar, selection]
+      properties:
+        avatar:
+          $ref: "#/components/schemas/AvatarRef"
+        selection:
+          $ref: "#/components/schemas/Selection"
+
+    DeltaEvent:
+      type: object
+      description: JSON `data` of a `delta` event. Append `text` to the answer so far.
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+
+    DoneEvent:
+      type: object
+      description: JSON `data` of the `done` event. The answer is complete.
+      additionalProperties: false
+      required: [id, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identifier of this answer.
+        createdAt:
+          type: string
+          format: date-time
+
+    AvatarRef:
+      type: object
+      description: |
+        Enough about the answering avatar for the UI to label the answer and
+        link to the avatar's page. The full avatar comes from the avatar service.
+      additionalProperties: false
+      required: [id, name, description, intensity, createdBy]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        intensity:
+          type: string
+          enum: [subtle, balanced, immersive]
+        createdBy:
+          type: string
+          enum: [user, assistant]
+
+    Selection:
+      type: object
+      description: How the avatar was picked.
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [requested, chosen, created]
+          description: |
+            - `requested`: the user named it with `avatarId`.
+            - `chosen`: the model picked an existing avatar.
+            - `created`: no avatar fit; the model drafted one and the assistant saved it.
+        reason:
+          type: string
+          description: The model's one-sentence reason. Present for `chosen` and `created`.
+
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    # ---------- Errors (RFC 9457 problem details) ----------
+
+    Problem:
+      type: object
+      description: An error, in RFC 9457 "problem details" form.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string

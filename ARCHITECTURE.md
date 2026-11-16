@@ -1,0 +1,117 @@
+# Avatars — architecture
+
+People define avatars (a stance: perspective, voice, what it cares about, what it ignores). An assistant picks the avatar that fits a question, creates one when none fits, and answers as it.
+
+## Components
+
+```
+UI (web)
+├─ Avatars page ─────────── REST ──────────────────────────► Avatar manager ──► SQLite
+└─ Assistant page ── REST ─► Assistant ── MCP ─► Avatar MCP ── REST ─┘
+                             prompts, loop,
+                             LLM calls ──► LLM provider
+```
+
+| Component | Owns | Talks to | Port |
+|---|---|---|---|
+| `web` | Avatars CRUD pages, chat page | Avatar manager (REST), Assistant (REST) | 5173 |
+| `avatar-manager` | Avatar data and validation; the only writer of the database | SQLite | 3000 |
+| `avatar-mcp` | Tool adapter; no data, no logic | Avatar manager (REST) | 3001 |
+| `assistant` | Sessions, system prompts, classification, LLM calls | Avatar MCP, LLM provider | 3002 |
+
+Each component does one thing. The assistant does not know where avatars are stored, and the avatar manager does not know an LLM exists.
+
+## Contracts
+
+- `contracts/avatar-service.openapi.yaml` — avatar REST API.
+- `contracts/assistant.openapi.yaml` — sessions and messages. The public surface only.
+- MCP tools (in `avatar-mcp`):
+
+| Tool | Returns | Backed by |
+|---|---|---|
+| `list_avatars` | Summaries: `id`, `name`, `description`, `useWhen` | `GET /avatars`, projected |
+| `get_avatar` | One full avatar | `GET /avatars/{id}` |
+| `create_avatar` | The created avatar | `POST /avatars` |
+
+The assistant gets no update or delete tools; editing stays with people.
+
+## Assistant loop (per message)
+
+1. `list_avatars` → summaries.
+2. If the request names `avatarId`, use it. Otherwise **classify**: one LLM call with the classifier system prompt, the summaries, and the message. The model returns either an existing avatar id or a draft of a new one, plus a one-sentence reason. That shape lives in the assistant's code, not in the public contract.
+3. On `propose`, call `create_avatar` with `createdBy: assistant`.
+4. `get_avatar` → build the avatar system prompt.
+5. Open the response stream: one `avatar` event (who is answering and how they were picked), then `delta` events as the second model call produces text, then `done`.
+
+Classification and the answer use the same model.
+
+Guards: an unknown `avatarId`, a draft rejected with 400, or a name conflict (409) is fed back to the model for **one** retry, then returns 502. The avatar manager's validation is the source of truth, because provider structured-output modes do not enforce every JSON Schema constraint.
+
+Prompt assembly, by `intensity`:
+- `subtle` — `perspective`, `caresAbout` (in order), and `ignores` decide what the answer covers. The voice is not applied.
+- `balanced` — adds `voice`.
+- `immersive` — adds a first-person, stay-in-character instruction.
+
+Sessions are in memory. Each message is answered on its own; history attaches to the session later.
+
+A seeded **Generalist** avatar (`useWhen`: simple factual or how-to questions) keeps trivial questions from creating new avatars.
+
+## Tech stack
+
+- **Language:** TypeScript, Node 22, pnpm workspace.
+- **Contracts → code:** `@hey-api/openapi-ts` generates types, typed fetch clients, and Zod schemas from `contracts/` into `packages/contracts`.
+- **HTTP services:** Hono with `@hono/zod-validator`, using the generated Zod schemas. Errors are returned as `application/problem+json`.
+- **Storage:** SQLite (`better-sqlite3`) with Drizzle. `name` is `UNIQUE COLLATE NOCASE`, and list fields are JSON columns.
+- **MCP:** `@modelcontextprotocol/sdk`, Streamable HTTP transport. Tool input schemas reuse the generated Zod schemas.
+- **LLM:** Vercel AI SDK (`ai`), which keeps the provider behind one interface. One model classifies and answers. The classifier's output schema is defined in the assistant, next to the prompt. The answer is streamed to the client as server-sent events.
+- **UI:** React, Vite, TanStack Query, and the generated clients.
+- **Tests:** Vitest. Contract tests check service responses against the specs. Assistant tests run against a mocked model.
+
+## Repo layout
+
+```
+contracts/                 OpenAPI specs (source of truth)
+packages/contracts/        generated types, clients, Zod (do not edit)
+apps/avatar-manager/       REST + SQLite, seed data
+apps/avatar-mcp/           MCP server
+apps/assistant/            loop, prompts, LLM adapter
+apps/web/                  UI
+Dockerfile                 demo image: all four processes, one port
+docker-compose.yml         the one command
+.env.example
+```
+
+## Configuration
+
+Everything is configured through environment variables, read once at startup and validated with Zod. A missing or invalid value stops startup with a clear message.
+
+| Variable | Used by | Example |
+|---|---|---|
+| `LLM_PROVIDER` | assistant | `openai` \| `anthropic` \| `google` \| `openai-compatible` |
+| `LLM_API_KEY` | assistant | — |
+| `LLM_MODEL` | assistant | `gpt-4.1-mini` |
+| `LLM_BASE_URL` | assistant | optional; for `openai-compatible` (Azure, Ollama, vLLM) |
+| `AVATAR_MCP_URL` | assistant | `http://localhost:3001/mcp` (set inside the demo image) |
+| `AVATAR_API_URL` | avatar-mcp | `http://localhost:3000/v1` (set inside the demo image) |
+| `DATABASE_PATH` | avatar-manager | `./data/avatars.db` |
+| `CORS_ORIGIN` | avatar-manager, assistant | only when the UI is on another origin |
+
+The API key stays in the assistant. It never reaches the browser, the MCP server, or the avatar manager.
+
+## Run
+
+Copy `.env.example` to `.env`, set `LLM_PROVIDER`, `LLM_API_KEY`, and `LLM_MODEL`, then:
+
+```
+docker compose up --build
+```
+
+Open `http://localhost:8080`. The SQLite file is on a named volume, so avatars survive a restart.
+
+That image is for the demo only. It starts all four processes and publishes one port; the UI is served from the same origin and proxies to the two APIs. In a real deployment each component is its own image, with its own scaling and release, and the URLs between them are configuration.
+
+While developing, `pnpm install && pnpm generate && pnpm dev` runs the four apps in watch mode on the ports in the Components table. The web app then reads `VITE_AVATAR_API_URL` and `VITE_ASSISTANT_API_URL`, because it is no longer on the same origin as the APIs.
+
+## Out of scope for v1
+
+Authentication, multiple users, chat history, avatar versioning, search and paging.
