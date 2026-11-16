@@ -96,6 +96,8 @@ export type Config = {
   llm: LlmState;
   /** Whether a draft is checked, and rewritten when it fails, before the person sees the answer. */
   checkAnswers: boolean;
+  /** Whether the language model provider's certificate is checked. See tls.ts. */
+  verifyProviderTls: boolean;
 };
 
 export class ConfigError extends Error {
@@ -144,7 +146,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (!parsed.success) {
     throw new ConfigError(parsed.error.issues.map((issue) => issue.message).join("\n"));
   }
-  return { ...parsed.data, llm: resolveLlm(env), checkAnswers: !isOff(env.ANSWER_CHECK) };
+  return {
+    ...parsed.data,
+    llm: resolveLlm(env),
+    checkAnswers: !isOff(env.ANSWER_CHECK),
+    verifyProviderTls: !isOff(env.LLM_TLS_VERIFY),
+  };
 }
 
 /**

@@ -35,7 +35,7 @@ Errors use `application/problem+json` (RFC 9457). Avatar names are unique withou
 5. `delta` — the answer text: the whole draft in one piece when it passed, the rewrite in pieces when it did not.
 6. `done` — the answer's id and time.
 
-`stage`, `draft`, and `evaluation` are sent only when answers are checked, which is the default. A client that reads only `delta` shows checked text only.
+`stage`, `draft`, and `evaluation` are sent only when answers are checked, which is the default. A client that reads only `delta` never shows a rejected draft; with verdict `skipped` the answer is unchecked, and a rewrite is not checked again.
 
 If the answer fails after the stream has opened, an `error` event (a problem document) is sent instead of `done`.
 

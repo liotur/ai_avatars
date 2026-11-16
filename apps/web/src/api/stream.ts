@@ -138,7 +138,11 @@ function parseSseBlock(block: string): ChatStreamEvent | null {
   try {
     json = JSON.parse(dataLines.join('\n'));
   } catch {
-    throw new ProblemError(undefined, 'The assistant sent an unreadable event.', 200);
+    // Only the events that carry the answer are worth failing it for.
+    if (eventName === 'avatar' || eventName === 'delta' || eventName === 'error') {
+      throw new ProblemError(undefined, 'The assistant sent an unreadable event.', 200);
+    }
+    return eventName === 'done' ? { event: 'done' } : null;
   }
 
   if (eventName === 'avatar') {

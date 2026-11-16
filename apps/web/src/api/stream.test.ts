@@ -76,4 +76,14 @@ describe('streamMessage', () => {
       { event: 'done' },
     ]);
   });
+
+  it('skips a progress event whose data is not JSON, and still delivers the answer', async () => {
+    const events = await read([
+      'event: stage\ndata: checking\n\n',
+      'event: ping\ndata: keepalive\n\n',
+      'event: delta\ndata: {"text":"Hi"}\n\n',
+      'event: done\ndata: {"id":"5d1c7b8e-0f2a-4c3b-9e8d-7a6b5c4d3e2f","createdAt":"2026-11-16T11:02:00Z"}\n\n',
+    ]);
+    expect(events).toEqual([{ event: 'delta', data: { text: 'Hi' } }, { event: 'done' }]);
+  });
 });

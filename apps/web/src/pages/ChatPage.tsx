@@ -137,10 +137,16 @@ export function ChatPage() {
   }, [turns]);
 
   // The message box grows with its text, up to the height set in the stylesheet.
+  // Empty, it is one line: a measurement taken while the page had almost no
+  // width (a tab opened in the background) would otherwise leave it tall.
   useEffect(() => {
     const box = messageRef.current;
     if (!box) return;
     box.style.height = 'auto';
+    if (!content) {
+      box.style.height = '';
+      return;
+    }
     if (box.scrollHeight > 0) box.style.height = `${box.scrollHeight}px`;
   }, [content]);
 
@@ -272,7 +278,7 @@ export function ChatPage() {
         if (!(error instanceof SessionNotFoundError) || started) throw error;
         const fresh = await openSession();
         queryClient.setQueryData(sessionKey, fresh);
-        setNotice('The assistant restarted, so it no longer remembers the earlier messages.');
+        setNotice('The assistant no longer had this chat, so it does not remember the earlier messages.');
         result = await send(fresh.id);
       }
       if (result === 'aborted') return;
@@ -511,7 +517,8 @@ export function ChatPage() {
                 rows={1}
                 placeholder="Ask something"
                 value={content}
-                disabled={!usable}
+                // Typing is allowed while a chat is being opened; only sending waits for it.
+                disabled={notReady}
                 aria-invalid={contentError ? true : undefined}
                 aria-describedby={contentError ? 'message-error' : undefined}
                 onKeyDown={onMessageKeyDown}

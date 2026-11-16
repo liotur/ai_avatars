@@ -81,7 +81,7 @@ describe("classifier prompt", () => {
   it("walks through ordered steps: a named avatar, a follow-up, no stance needed, the ideal person, a draft", () => {
     const steps = [
       "1. The message names an avatar from the list",
-      "2. There is a conversation so far, and the message continues its subject",
+      "2. There is a conversation so far, and the message continues it",
       "3. The message needs no particular stance",
       "4. Before looking at the list, say who would be the ideal person to answer this message",
       "5. No avatar qualifies. Draft the ideal person as a new avatar.",
@@ -129,8 +129,11 @@ describe("classifier prompt", () => {
   });
 
   it("shows the classifier the conversation, and tells it to stay with the avatar for a follow-up", () => {
-    expect(CLASSIFIER_SYSTEM).toContain("Choose the avatar that answered last, if it is still in the list.");
+    expect(CLASSIFIER_SYSTEM).toContain("Choose the avatar that last answered the conversation's subject");
+    expect(CLASSIFIER_SYSTEM).toContain("a thank-you or acknowledgement");
+    expect(CLASSIFIER_SYSTEM).toContain("passing over turns that were only small talk");
     expect(CLASSIFIER_SYSTEM).toContain("A new subject does not count");
+    expect(CLASSIFIER_SYSTEM).toContain("thanks outside a conversation");
 
     const summaries = [{ id: avatar.id, name: avatar.name, description: avatar.description, useWhen: [] as string[] }];
     expect(classifierUserPrompt({ content: "Hi", summaries })).not.toContain("Conversation so far");

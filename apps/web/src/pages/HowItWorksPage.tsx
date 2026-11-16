@@ -201,7 +201,7 @@ export function HowItWorksPage() {
                 <span>the four checks</span>
               </Wire>
               <Wire label="user">
-                <span>the avatar + your message + the draft</span>
+                <span>the avatar + the last turns + your message + the draft</span>
               </Wire>
             </div>
             <ul className="dial" aria-label="What is checked">
