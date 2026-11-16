@@ -64,8 +64,20 @@ A seeded **Generalist** avatar (`useWhen`: simple factual or how-to questions) k
 - **Storage:** SQLite (`better-sqlite3`) with Drizzle. `name` is `UNIQUE COLLATE NOCASE`, and list fields are JSON columns.
 - **MCP:** `@modelcontextprotocol/sdk`, Streamable HTTP transport. Tool input schemas reuse the generated Zod schemas.
 - **LLM:** Vercel AI SDK (`ai`), which keeps the provider behind one interface. One model classifies and answers. The classifier's output schema is defined in the assistant, next to the prompt. The answer is streamed to the client as server-sent events.
-- **UI:** React, Vite, TanStack Query, and the generated clients.
+- **UI:** TypeScript (strict), React, Vite, TanStack Query for REST, and the generated clients. See [UI](#ui).
 - **Tests:** Vitest. Contract tests check service responses against the specs. Assistant tests run against a mocked model.
+
+## UI
+
+The web app is TypeScript throughout and imports the generated client and Zod schemas from `packages/contracts`, so an API change fails the build, not the page.
+
+- **Routes:** `/avatars` (library, detail, create, edit) and `/chat` (one session per page load).
+- **Data:** TanStack Query for the avatar REST API. Mutations invalidate the list.
+- **Forms:** React Hook Form with the generated Zod schemas, so the browser and the API apply the same rules.
+- **Chat streaming:** `EventSource` only supports GET, and sending a message is a POST. The client calls `fetch` and parses the `text/event-stream` body itself, handling the `avatar`, `delta`, `done`, and `error` events.
+- **Errors:** `application/problem+json` responses are shown by their `detail` field, with field errors placed next to the matching input.
+- **Testing:** Vitest with Testing Library for components. One Playwright path (create an avatar, ask a question) once the stack runs in Docker.
+- **Styling:** not decided. Use the `ui-ux-pro-max` skill when building the screens.
 
 ## Repo layout
 
