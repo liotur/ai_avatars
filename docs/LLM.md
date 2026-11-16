@@ -14,14 +14,14 @@ LLM_MODEL=gpt-4.1-mini
 
 `LLM_MODEL` already has a default. `.env.example` lists other models in comments; use one your AutoX account offers. One model does all three calls: choosing the avatar, writing the answer, and checking it.
 
-After changing `.env`, start the app again (`docker compose up -d`, or restart `pnpm dev`).
+After changing `.env`, start the app again (stop it and `pnpm start`, or `docker compose up -d` for the container).
 
 ## What AutoX needs around it
 
 - **The Amdocs network.** AutoX answers only on the VPN.
 - **Amdocs certificate authorities.** AutoX's certificate is signed by an Amdocs authority that a stock Linux image and a stock Node do not know. Without it a message fails with "Could not reach the provider", although the network is fine.
   - Docker: put the authorities in `certs/` as described in [certs/README.md](../certs/README.md). The container reads that folder at start.
-  - `pnpm dev`: the assistant is started with Node's `--use-system-ca`, so it trusts whatever the operating system trusts. That needs Node 22.15 or later.
+  - `pnpm start`: the assistant is started with Node's `--use-system-ca`, so it trusts whatever the operating system trusts. That needs Node 22.15 or later.
 - **No web proxy for AutoX.** AutoX is an internal address. The assistant does not use `HTTPS_PROXY`, so nothing needs changing; a `curl` test from a shell that has a proxy set needs `--noproxy '*'`.
 
 Building the image is the opposite case: it needs the internet (Docker Hub, npm, Debian). On a network that reaches the internet only through a proxy, give that proxy to Docker before building.
@@ -60,7 +60,7 @@ Earlier answers of the same chat are sent as `"role": "assistant"` items whose c
 | `AUTOX_BASE_URL` | Where AutoX is served from | `https://chat.autox.corp.amdocs.azr/api/v1/proxy/openai` |
 | `AUTOX_API_VERSION` | The `api-version` query parameter | `2025-03-01-preview` |
 | `AUTOX_APPLICATION` | Sent as the `application` header | `autox-merged-ui` |
-| `ANSWER_CHECK` | `off` shows answers as they are written, without checking them first | on |
+| `ANSWER_CHECK` | `off` skips the validation: the answer is shown as it is written, with no thinking step | on |
 
 `LLM_USERNAME`, then the shell's `USERNAME`, stand in for an empty `AUTOX_USERNAME`.
 

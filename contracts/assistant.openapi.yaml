@@ -136,20 +136,25 @@ paths:
 
         1. `avatar`, once. Data is `AvatarEvent`.
         2. `stage`, zero or more times. Data is `StageEvent`. Sent only when
-           answers are checked, to say what the assistant is doing while
-           nothing can be shown yet.
-        3. `evaluation`, at most once. Data is `EvaluationEvent`. Sent only
-           when answers are checked, before any text.
-        4. `delta`, zero or more times. Data is `DeltaEvent`.
-        5. `done`, once, then the stream closes. Data is `DoneEvent`.
+           answers are checked, to say what the assistant is doing.
+        3. `draft`, zero or more times. Data is `DraftEvent`. Sent only when
+           answers are checked: the draft as it is written, to show as work
+           in progress. It is not the answer.
+        4. `evaluation`, at most once. Data is `EvaluationEvent`. Sent only
+           when answers are checked, before any `delta`.
+        5. `delta`, zero or more times. Data is `DeltaEvent`. The answer.
+        6. `done`, once, then the stream closes. Data is `DoneEvent`.
 
         **The answer check.** Unless it is switched off, the avatar's first
-        draft is not shown. A second model call checks that it answers the
+        draft is not yet the answer. It is streamed as `draft` events while
+        it is written. A second model call then checks that it answers the
         question, is sound, follows the avatar's stance, and uses the wording
-        the avatar's intensity calls for. A draft that passes arrives as one
-        `delta`. A draft that fails is rewritten once by the avatar, with the
-        checker's advice, and the rewrite arrives as it is written. When the
-        check cannot run, the draft is shown with the verdict `skipped`.
+        the avatar's intensity calls for. A draft that passes is confirmed as
+        the answer in one `delta` with the same text. A draft that fails is
+        rewritten once by the avatar, with the checker's advice, and the
+        rewrite arrives as `delta` events as it is written. When the check
+        cannot run, the draft becomes the answer with the verdict `skipped`.
+        A client that reads only `delta` therefore shows checked text only.
 
         If the answer fails after the stream has opened, an `error` event
         (data is `Problem`) is sent instead of `done`, and the stream closes.
@@ -347,9 +352,21 @@ components:
           type: string
           enum: [drafting, checking, revising]
           description: |
-            - `drafting`: the avatar is writing a draft that is held back.
+            - `drafting`: the avatar is writing a draft; `draft` events follow.
             - `checking`: the draft is being checked.
             - `revising`: the draft failed, and the avatar is writing it again.
+
+    DraftEvent:
+      type: object
+      description: |
+        JSON `data` of a `draft` event. Append `text` to the draft so far. The
+        draft is work in progress: the answer is what the `delta` events carry.
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
 
     EvaluationEvent:
       type: object

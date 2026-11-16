@@ -557,15 +557,27 @@ describe("assistant HTTP", () => {
       advice,
     });
 
-    it("holds the draft back, checks it, and shows it when it passes", async () => {
+    it("streams the draft as work in progress, checks it, and confirms it as the answer when it passes", async () => {
       const language = model();
       const events = await ask(createApp({ mcp: mcp(), model: language, checkAnswers: true }));
 
-      expect(events.map((event) => event.event)).toEqual(["avatar", "stage", "stage", "evaluation", "delta", "done"]);
+      expect(events.map((event) => event.event)).toEqual([
+        "avatar",
+        "stage",
+        "draft",
+        "draft",
+        "stage",
+        "evaluation",
+        "delta",
+        "done",
+      ]);
       expect(events[1]?.data).toEqual({ stage: "drafting" });
-      expect(events[2]?.data).toEqual({ stage: "checking" });
-      expect(events[3]?.data).toEqual({ verdict: "passed", failed: [] });
-      expect(events[4]?.data).toEqual({ text: "Two engineers cost about $400k a year loaded. What do they ship?" });
+      expect(events[2]?.data).toEqual({ text: "Two engineers cost about $400k a year loaded. " });
+      expect(events[3]?.data).toEqual({ text: "What do they ship?" });
+      expect(events[4]?.data).toEqual({ stage: "checking" });
+      expect(events[5]?.data).toEqual({ verdict: "passed", failed: [] });
+      // The answer is the whole draft, in one piece.
+      expect(events[6]?.data).toEqual({ text: "Two engineers cost about $400k a year loaded. What do they ship?" });
       expect(language.evaluate).toHaveBeenCalledTimes(1);
       expect(vi.mocked(language.evaluate).mock.calls[0]?.[0]).toMatchObject({
         content: "Should I hire two engineers?",
@@ -594,6 +606,7 @@ describe("assistant HTTP", () => {
       expect(events.map((event) => event.event)).toEqual([
         "avatar",
         "stage",
+        "draft",
         "stage",
         "evaluation",
         "stage",
@@ -601,11 +614,13 @@ describe("assistant HTTP", () => {
         "delta",
         "done",
       ]);
-      expect(events[3]?.data).toEqual({ verdict: "revised", failed: ["stance"], note: "Lead with the cash runway." });
-      expect(events[4]?.data).toEqual({ stage: "revising" });
-      expect(events[5]?.data).toEqual({ text: "Runway first: " });
-      // The draft is never sent to the person.
-      expect(JSON.stringify(events)).not.toContain("A vague first draft.");
+      expect(events[2]?.data).toEqual({ text: "A vague first draft." });
+      expect(events[4]?.data).toEqual({ verdict: "revised", failed: ["stance"], note: "Lead with the cash runway." });
+      expect(events[5]?.data).toEqual({ stage: "revising" });
+      expect(events[6]?.data).toEqual({ text: "Runway first: " });
+      // The rejected draft is shown as a draft, never as the answer.
+      const answer = events.filter((event) => event.event === "delta");
+      expect(JSON.stringify(answer)).not.toContain("A vague first draft.");
       // The rewrite is asked for after the draft, with the advice, and is not checked again.
       expect(calls[1]?.history).toEqual([
         { role: "user", content: "Should I hire two engineers?" },
@@ -652,15 +667,24 @@ describe("assistant HTTP", () => {
         }),
       });
       const events = await ask(createApp({ mcp: mcp(), model: language, checkAnswers: true }));
-      expect(events.map((event) => event.event)).toEqual(["avatar", "stage", "stage", "evaluation", "delta", "done"]);
-      expect(events[3]?.data).toEqual({
+      expect(events.map((event) => event.event)).toEqual([
+        "avatar",
+        "stage",
+        "draft",
+        "draft",
+        "stage",
+        "evaluation",
+        "delta",
+        "done",
+      ]);
+      expect(events[5]?.data).toEqual({
         verdict: "skipped",
         failed: [],
         note: "The check could not be run, so this answer is shown unchecked.",
       });
     });
 
-    it("sends an error and shows nothing when the draft cannot be written", async () => {
+    it("sends an error, and no answer, when the draft cannot be finished", async () => {
       const language = model({
         streamAnswer: async function* () {
           yield "Half a ";
@@ -668,7 +692,7 @@ describe("assistant HTTP", () => {
         },
       });
       const events = await ask(createApp({ mcp: mcp(), model: language, checkAnswers: true }));
-      expect(events.map((event) => event.event)).toEqual(["avatar", "stage", "error"]);
+      expect(events.map((event) => event.event)).toEqual(["avatar", "stage", "draft", "error"]);
       expect(language.evaluate).not.toHaveBeenCalled();
     });
 

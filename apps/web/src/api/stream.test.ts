@@ -58,8 +58,10 @@ describe('streamMessage', () => {
     expect(events).toEqual([{ event: 'delta', data: { text: 'Show me ' } }, { event: 'done' }]);
   });
 
-  it('reads the stage and check events, and skips one it cannot read instead of failing the answer', async () => {
+  it('reads the stage, draft and check events, and skips one it cannot read instead of failing the answer', async () => {
     const events = await read([
+      'event: draft\ndata: {"text":"Hi"}\n\n',
+      'event: draft\ndata: {"text":""}\n\n',
       'event: stage\ndata: {"stage":"checking"}\n\n',
       'event: evaluation\ndata: {"verdict":"revised","failed":["voice"],"note":"Speak plainly."}\n\n',
       'event: stage\ndata: {"stage":"something new"}\n\n',
@@ -67,6 +69,7 @@ describe('streamMessage', () => {
       'event: done\ndata: {"id":"5d1c7b8e-0f2a-4c3b-9e8d-7a6b5c4d3e2f","createdAt":"2026-11-16T11:02:00Z"}\n\n',
     ]);
     expect(events).toEqual([
+      { event: 'draft', data: { text: 'Hi' } },
       { event: 'stage', data: { stage: 'checking' } },
       { event: 'evaluation', data: { verdict: 'revised', failed: ['voice'], note: 'Speak plainly.' } },
       { event: 'delta', data: { text: 'Hi' } },

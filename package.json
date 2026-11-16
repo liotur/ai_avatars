@@ -3,9 +3,10 @@
   "private": true,
   "packageManager": "pnpm@10.34.9",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.15"
   },
   "scripts": {
+    "start": "pnpm generate && pnpm dev",
     "generate": "pnpm --filter @avatars/contracts generate",
     "dev": "pnpm --parallel --filter \"./apps/*\" dev",
     "test": "pnpm -r --if-present test",

@@ -44,8 +44,8 @@ The code calls the tools; the model never decides whether to fetch avatars. That
 3. On a draft, call `create_avatar` with `createdBy: assistant`.
 4. `get_avatar` → build the avatar system prompt.
 5. Open the response stream with one `avatar` event (who is answering and how they were picked).
-6. **Draft**: a second model call writes the answer, with the earlier turns of the chat as context. The draft is held back.
-7. **Check**: a third model call judges the draft. If it passes, it is sent. If it fails, the avatar writes it again once, with the checker's advice, and the rewrite is sent as it is written.
+6. **Draft**: a second model call writes the answer, with the earlier turns of the chat as context. The draft is streamed as work in progress (`draft` events); it is not the answer yet.
+7. **Check**: a third model call judges the draft. If it passes, it is confirmed as the answer. If it fails, the avatar writes it again once, with the checker's advice, and the rewrite is sent as it is written.
 8. `done`. The exchange is remembered.
 
 All three calls use the same model. With `ANSWER_CHECK=off`, steps 6 and 7 collapse into one: the answer is sent as it is written, unchecked.
@@ -91,7 +91,7 @@ The draft is checked before the person sees it (`apps/assistant/src/evaluate.ts`
 
 The checker only judges. When a check fails, its advice goes back to the avatar, which writes the answer again; that rewrite is not checked a second time, so a message costs at most four model calls. When the check itself cannot run (the provider fails, or its reply cannot be read), the draft is shown and labelled as not checked: the check is a quality step, not a gate.
 
-The stream tells the client what is happening: `stage` events (`drafting`, `checking`, `revising`) while nothing can be shown, then one `evaluation` event with the verdict (`passed`, `revised`, or `skipped`) before the text. The price is that the person no longer watches a passing answer being written: it arrives whole, a few seconds later.
+The stream keeps the two apart. `stage` events say what is happening (`drafting`, `checking`, `revising`). `draft` events carry the draft as it is written, and the UI shows it as thinking. One `evaluation` event gives the verdict (`passed`, `revised`, or `skipped`). Only `delta` events are the answer: the whole draft in one piece when it passed, the rewrite piece by piece when it did not. A client that reads only `delta` shows checked text and nothing else.
 
 ### Memory
 
@@ -167,17 +167,26 @@ Only the assistant reads the API key, and it is never sent to the browser, the M
 
 ## Run
 
-Copy `.env.example` to `.env`, set `AUTOX_USERNAME` and `AUTOX_KEY`, put the Amdocs certificate authorities in `certs/` (see `certs/README.md`), then:
+Copy `.env.example` to `.env`, set `AUTOX_USERNAME` and `AUTOX_KEY`, then:
+
+```
+pnpm install
+pnpm start
+```
+
+Open `http://localhost:5173`. `pnpm start` generates the typed clients from `contracts/` and runs the four apps in watch mode on the ports in the Components table. The assistant is started with Node's `--use-system-ca`, so it trusts the certificate authorities the operating system trusts, which is what lets it reach AutoX on an Amdocs machine.
+
+The same app also runs as one container. Put the Amdocs certificate authorities in `certs/` (see `certs/README.md`), then:
 
 ```
 docker compose up --build
 ```
 
-Open `http://localhost:8090`. The SQLite file is on a named volume, so avatars survive a restart.
+Open `http://localhost:8090`. The SQLite file is on a named volume, so avatars survive a restart. Building the image needs the internet, which the Amdocs network reaches only through its proxy.
 
-That image is for the demo only. It starts all four processes and publishes one port. nginx serves the UI and routes `/v1/avatars` to the avatar manager and `/v1/sessions` and `/v1/assistant` to the assistant; when a service cannot be reached it answers in the APIs' own error format. The start script hands the certificate authorities in the mounted `certs/` folder to the assistant, waits for the three services, and stops the container if any process exits, so a failure is not silent. In a real deployment each component is its own image, with its own scaling and release, and the URLs between them are configuration.
+That image is for a demo only. It starts all four processes and publishes one port. nginx serves the UI and routes `/v1/avatars` to the avatar manager and `/v1/sessions` and `/v1/assistant` to the assistant; when a service cannot be reached it answers in the APIs' own error format. The start script hands the certificate authorities in the mounted `certs/` folder to the assistant, waits for the three services, and stops the container if any process exits, so a failure is not silent. In a real deployment each component is its own image, with its own scaling and release, and the URLs between them are configuration.
 
-While developing, `pnpm install && pnpm generate && pnpm dev` runs the four apps in watch mode on the ports in the Components table. The web app then reads `VITE_AVATAR_API_URL` and `VITE_ASSISTANT_API_URL` (defaults: the local ports), because it is no longer on the same origin as the APIs.
+Run locally, the web app is not on the same origin as the APIs, so it reads `VITE_AVATAR_API_URL` and `VITE_ASSISTANT_API_URL` (defaults: the local ports), and the two services allow the UI's origin through `CORS_ORIGIN`.
 
 ## Out of scope for v1
 

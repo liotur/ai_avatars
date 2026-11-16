@@ -189,7 +189,7 @@ export function resolveLlm(env: NodeJS.ProcessEnv): LlmState {
     } else {
       return notReady(
         "No language model is set up. Put AUTOX_USERNAME and AUTOX_KEY in the .env file at the project root, " +
-          "then start the app again (docker compose up -d).",
+          "then start the app again.",
       );
     }
   }

@@ -96,36 +96,104 @@ describe('chat', () => {
     expect(screen.getByText('chosen')).toBeInTheDocument();
   });
 
-  it('says the answer was checked, and why a first draft was rewritten', async () => {
-    const checked = (evaluation: unknown) =>
+  it('says the answer was validated, and keeps a rejected first draft behind a toggle', async () => {
+    const validated = (draft: string, evaluation: unknown, answerText: string) =>
       sse([
         ['avatar', { avatar: CFO, selection: { mode: 'chosen', reason: 'A budget question.' } }],
         ['stage', { stage: 'drafting' }],
+        ['draft', { text: draft }],
         ['stage', { stage: 'checking' }],
         ['evaluation', evaluation],
-        ['delta', { text: 'Show me the payback.' }],
+        ['delta', { text: answerText }],
         ['done', { id: '5d1c7b8e-0f2a-4c3b-9e8d-7a6b5c4d3e2f', createdAt: '2026-11-16T11:02:00Z' }],
       ]);
     let calls = 0;
     stubFetch(() => {
       calls += 1;
       return calls === 1
-        ? checked({ verdict: 'passed', failed: [] })
-        : checked({ verdict: 'revised', failed: ['stance'], note: 'Lead with the cash runway.' });
+        ? validated('Show me the payback.', { verdict: 'passed', failed: [] }, 'Show me the payback.')
+        : validated(
+            'Follow your dreams.',
+            { verdict: 'revised', failed: ['stance'], note: 'Lead with the cash runway.' },
+            'Runway first: nine months.',
+          );
     });
     renderChat();
 
     await typeMessage('Should we hire?');
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText('Show me the payback.')).toBeInTheDocument();
-    expect(screen.getByText('checked')).toBeInTheDocument();
+    // A draft that passed is shown once, as the answer, with nothing left of the thinking block.
+    expect(await screen.findByText('validated')).toBeInTheDocument();
+    expect(screen.getAllByText('Show me the payback.')).toHaveLength(1);
+    expect(document.querySelector('.thinking')).toBeNull();
+    expect(document.querySelector('.first-draft')).toBeNull();
 
     await typeMessage('And now?');
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText('rewritten after check')).toBeInTheDocument();
+    expect(await screen.findByText('rewritten after validation')).toBeInTheDocument();
+    expect(screen.getByText('Runway first: nine months.')).toBeInTheDocument();
     expect(
       screen.getByText("The first draft did not follow the avatar's stance. Lead with the cash runway."),
     ).toBeInTheDocument();
+    // The rejected draft is kept, out of the way.
+    const firstDraft = document.querySelector('details.first-draft');
+    expect(firstDraft).not.toBeNull();
+    expect(firstDraft).not.toHaveAttribute('open');
+    expect(firstDraft?.textContent).toContain('Follow your dreams.');
+  });
+
+  it('shows the draft as thinking while it is written, then says it is being validated', async () => {
+    const encoder = new TextEncoder();
+    let push: (events: Array<[string, unknown]>) => void = () => {};
+    let finish: () => void = () => {};
+    stubFetch(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              push = (events) => {
+                for (const [event, data] of events) {
+                  controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+                }
+              };
+              finish = () => controller.close();
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'text/event-stream' } },
+        ),
+    );
+    renderChat();
+    await typeMessage('Should we hire?');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument());
+    push([
+      ['avatar', { avatar: CFO, selection: { mode: 'chosen', reason: 'A budget question.' } }],
+      ['stage', { stage: 'drafting' }],
+      ['draft', { text: 'Show me ' }],
+    ]);
+    expect(await screen.findByText('Thinking.')).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.thinking')?.textContent).toBe('Show me'));
+
+    push([
+      ['draft', { text: 'the payback.' }],
+      ['stage', { stage: 'checking' }],
+    ]);
+    expect(await screen.findByText('Validating the answer.')).toBeInTheDocument();
+    expect(document.querySelector('.thinking')?.textContent).toBe('Show me the payback.');
+    // Nothing counts as the answer yet.
+    expect(screen.queryByText('validated')).not.toBeInTheDocument();
+
+    push([
+      ['evaluation', { verdict: 'passed', failed: [] }],
+      ['delta', { text: 'Show me the payback.' }],
+      ['done', { id: '5d1c7b8e-0f2a-4c3b-9e8d-7a6b5c4d3e2f', createdAt: '2026-11-16T11:02:00Z' }],
+    ]);
+    finish();
+    expect(await screen.findByText('validated')).toBeInTheDocument();
+    expect(document.querySelector('.thinking')).toBeNull();
+    expect(screen.queryByText('Validating the answer.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
   });
 
   it('starts over with New chat: an empty thread and a new session', async () => {

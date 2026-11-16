@@ -33,8 +33,10 @@ type Turn = {
   requested?: string;
   /** The person stopped the answer. */
   stopped?: boolean;
-  /** What the assistant is doing while the answer is held back for its check. */
+  /** What the assistant is doing before the answer is confirmed. */
   stage?: StageEvent['stage'];
+  /** The draft as it is written: work in progress, shown as thinking. Not the answer. */
+  draft?: string;
   /** How the check of the draft went. Absent when answers are not checked. */
   evaluation?: EvaluationEvent;
   error?: string;
@@ -50,30 +52,30 @@ type Turn = {
 const STICK_DISTANCE = 96;
 
 const STAGE_TEXT: Record<StageEvent['stage'], string> = {
-  drafting: 'Writing a draft.',
-  checking: 'Checking the draft.',
-  revising: 'Rewriting it after the check.',
+  drafting: 'Thinking.',
+  checking: 'Validating the answer.',
+  revising: 'Rewriting after validation.',
 };
 
 const VERDICT: Record<EvaluationEvent['verdict'], { label: string; icon: IconName; className: string }> = {
-  passed: { label: 'checked', icon: 'check', className: 'badge badge-ok' },
-  revised: { label: 'rewritten after check', icon: 'refresh', className: 'badge badge-warn' },
-  skipped: { label: 'not checked', icon: 'alert', className: 'badge' },
+  passed: { label: 'validated', icon: 'check', className: 'badge badge-ok' },
+  revised: { label: 'rewritten after validation', icon: 'refresh', className: 'badge badge-warn' },
+  skipped: { label: 'not validated', icon: 'alert', className: 'badge' },
 };
 
 const CHECK_NAMES: Record<EvaluationEvent['failed'][number], string> = {
   answers: 'did not answer the question',
   sound: 'was not sound',
-  stance: 'did not follow the avatar\'s stance',
-  voice: 'did not fit the avatar\'s voice',
+  stance: "did not follow the avatar's stance",
+  voice: "did not fit the avatar's voice",
 };
 
-/** One line on why the first draft was not shown, or why the answer is unchecked. */
+/** One line on why the first draft did not become the answer, or why the answer is not validated. */
 function evaluationNote(evaluation: EvaluationEvent): string | undefined {
   if (evaluation.verdict === 'passed') return undefined;
   if (evaluation.verdict === 'skipped') return evaluation.note;
   const reasons = evaluation.failed.map((name) => CHECK_NAMES[name]);
-  const why = reasons.length > 0 ? `The first draft ${reasons.join(' and ')}.` : 'The first draft did not pass the check.';
+  const why = reasons.length > 0 ? `The first draft ${reasons.join(' and ')}.` : 'The first draft did not pass validation.';
   return evaluation.note ? `${why} ${evaluation.note}` : why;
 }
 
@@ -228,6 +230,10 @@ export function ChatPage() {
       }
       if (streamEvent.event === 'stage') {
         update((turn) => ({ ...turn, stage: streamEvent.data.stage }));
+        return;
+      }
+      if (streamEvent.event === 'draft') {
+        update((turn) => ({ ...turn, draft: (turn.draft ?? '') + streamEvent.data.text }));
         return;
       }
       if (streamEvent.event === 'evaluation') {
@@ -398,8 +404,13 @@ export function ChatPage() {
                   {turn.evaluation && evaluationNote(turn.evaluation) ? (
                     <p className="answer-reason">{evaluationNote(turn.evaluation)}</p>
                   ) : null}
-                  <div className={turn.pending && turn.answer ? 'answer-body streaming' : 'answer-body'}>
-                    {turn.answer ? <Markdown text={turn.answer} /> : null}
+                  <div
+                    className={
+                      turn.pending && (turn.answer || (turn.draft && turn.stage === 'drafting'))
+                        ? 'answer-body streaming'
+                        : 'answer-body'
+                    }
+                  >
                     {!turn.answer && !turn.error && turn.pending ? (
                       <p className="status" role="status">
                         <span className="dots" aria-hidden="true">
@@ -409,6 +420,19 @@ export function ChatPage() {
                         </span>
                         {turn.stage ? STAGE_TEXT[turn.stage] : 'Writing.'}
                       </p>
+                    ) : null}
+                    {/* The draft is shown as thinking until an answer takes its place. */}
+                    {!turn.answer && turn.draft ? (
+                      <div className="thinking">
+                        <Markdown text={turn.draft} />
+                      </div>
+                    ) : null}
+                    {turn.answer ? <Markdown text={turn.answer} /> : null}
+                    {turn.answer && turn.draft && turn.evaluation?.verdict === 'revised' ? (
+                      <details className="first-draft">
+                        <summary>First draft, before validation</summary>
+                        <Markdown text={turn.draft} />
+                      </details>
                     ) : null}
                     {turn.stopped ? <p className="answer-stopped">You stopped this answer.</p> : null}
                     {turn.error ? (

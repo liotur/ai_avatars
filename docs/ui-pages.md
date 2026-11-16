@@ -116,9 +116,10 @@ Create and edit are the same form, in five groups. Edit fills the fields and add
 - `Answer as` lists avatars by name. The first option is "Let the assistant choose", which omits `avatarId`.
 - Enter sends. Shift and Enter starts a new line.
 - While waiting, the page says "Choosing an avatar." or, when one was picked, "Asking Skeptical CFO."
-- The answer block appears only after the `avatar` event. While the draft is held back for its check, the block says what is happening: "Writing a draft.", "Checking the draft.", or "Rewriting it after the check."
-- The text is shown as Markdown (lists, emphasis, code). A draft that passes its check arrives whole; a rewrite, and any answer when the check is switched off, grows with each `delta`.
-- A second tag says how the check went: `checked`, `rewritten after check`, or `not checked`. For a rewrite, a line under the reason says what was wrong with the first draft.
+- The answer block appears only after the `avatar` event. First it says "Thinking." and shows the draft as it is written, dimmed and set off by a line, so it is clearly not the answer yet. Then it says "Validating the answer." while the draft is checked.
+- A draft that passes becomes the answer in place: the dimming goes and the tag `validated` appears. A draft that fails is replaced by the rewrite, which grows as it is written under "Rewriting after validation."; the first draft stays available behind a "First draft, before validation" toggle, and a line under the reason says what was wrong with it.
+- The tags are `validated`, `rewritten after validation`, and `not validated` (the check could not run).
+- The text is shown as Markdown (lists, emphasis, code). With the check switched off there is no thinking step: the answer grows with each `delta`.
 - The tag after the name is the selection: `chosen`, `created`, or `requested`. The line under it is the reason, when there is one. `created` means the avatar is new and already in the library.
 - The avatar's name links to its page, in a new tab, so the conversation stays open.
 - While an answer is arriving the send button becomes Stop. Stopping keeps the text that has arrived.
@@ -151,7 +152,7 @@ A page for someone seeing the product for the first time. Mostly pictures.
 |  (3) It decides who answers   requested | chosen | created     |
 |  (4) It loads that avatar     get_avatar, intensity            |
 |  (5) The avatar writes a draft                                 |
-|  (6) The draft is checked     answers | sound | stance | voice |
+|  (6) The draft is validated   answers | sound | stance | voice |
 |  (7) You get the answer       avatar -> ... -> delta -> done   |
 +----------------------------------------------------------------+
 ```

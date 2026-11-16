@@ -191,10 +191,10 @@ export function HowItWorksPage() {
                 <span>the conversation so far + your message</span>
               </Wire>
             </div>
-            <p className="flow-note">You do not see this draft yet.</p>
+            <p className="flow-note">You watch it being written, marked as thinking. It is not the answer yet.</p>
           </Step>
 
-          <Step number={6} title="The draft is checked">
+          <Step number={6} title="The draft is validated">
             <Hop from={['assistant', 'Assistant']} to={['model', 'Language model']} />
             <div className="call">
               <Wire label="system">
@@ -226,15 +226,15 @@ export function HowItWorksPage() {
               <li className="outcome">
                 <span className="badge badge-ok">
                   <Icon name="check" />
-                  checked
+                  validated
                 </span>
                 <p>All four pass.</p>
-                <p className="flow-note">The draft is the answer.</p>
+                <p className="flow-note">The draft becomes the answer.</p>
               </li>
               <li className="outcome">
                 <span className="badge badge-warn">
                   <Icon name="refresh" />
-                  rewritten after check
+                  rewritten after validation
                 </span>
                 <p>One fails.</p>
                 <p className="flow-note">The avatar writes it again, once, with the advice.</p>
@@ -242,10 +242,10 @@ export function HowItWorksPage() {
               <li className="outcome">
                 <span className="badge">
                   <Icon name="alert" />
-                  not checked
+                  not validated
                 </span>
                 <p>The check could not run.</p>
-                <p className="flow-note">The draft is shown with this label.</p>
+                <p className="flow-note">The draft becomes the answer, with this label.</p>
               </li>
             </ul>
           </Step>
@@ -256,6 +256,8 @@ export function HowItWorksPage() {
               <code>avatar</code>
               <Icon name="arrow-right" />
               <code>stage</code>
+              <Icon name="arrow-right" />
+              <code>draft</code>
               <code>…</code>
               <Icon name="arrow-right" />
               <code>evaluation</code>
@@ -266,9 +268,10 @@ export function HowItWorksPage() {
               <code>done</code>
             </Wire>
             <p className="flow-note">
-              <code>avatar</code> says who is answering and why, <code>stage</code> what is happening while you wait,{' '}
-              <code>evaluation</code> how the check went, and each <code>delta</code> is text. The assistant then
-              remembers the exchange, so the next message can follow up.
+              <code>avatar</code> says who is answering and why, <code>stage</code> what is happening, each{' '}
+              <code>draft</code> is a piece of the thinking, <code>evaluation</code> how the validation went, and each{' '}
+              <code>delta</code> is the answer. The assistant then remembers the exchange, so the next message can follow
+              up.
             </p>
           </Step>
         </ol>

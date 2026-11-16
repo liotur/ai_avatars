@@ -37,9 +37,9 @@ export type CreateAppOptions = {
   status?: AssistantStatus;
   corsOrigin?: string;
   /**
-   * Check each draft before the person sees it, and have the avatar rewrite a
-   * draft that fails. The answer is then shown once it is ready, not as it is
-   * written. Off unless set.
+   * Check each draft before it counts as the answer, and have the avatar
+   * rewrite a draft that fails. The draft is streamed as work in progress, and
+   * the answer follows once the check is done. Off unless set.
    */
   checkAnswers?: boolean;
   sessions?: SessionStore;
@@ -198,7 +198,8 @@ export function createApp(options: CreateAppOptions) {
           if (!options.checkAnswers) {
             await streamToPerson({ prompt: body.content, history: earlier });
           } else {
-            // The draft is held back until it has been checked.
+            // The draft is shown as work in progress while it is written. It becomes
+            // the answer only once it has been checked.
             await send("stage", { stage: "drafting" });
             let draft = "";
             for await (const text of model.streamAnswer({
@@ -207,6 +208,8 @@ export function createApp(options: CreateAppOptions) {
               history: earlier,
               signal: disconnected.signal,
             })) {
+              if (text.length === 0) continue;
+              await send("draft", { text });
               draft += text;
             }
 

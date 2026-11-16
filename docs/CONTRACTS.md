@@ -29,12 +29,13 @@ Errors use `application/problem+json` (RFC 9457). Avatar names are unique withou
 `sendMessage` returns `text/event-stream` once the avatar is settled:
 
 1. `avatar` — who is answering and how they were picked (`requested` | `chosen` | `created`), with the reason.
-2. `stage` — what the assistant is doing while the answer is held back for its check (`drafting` | `checking` | `revising`).
-3. `evaluation` — how the check of the draft went (`passed` | `revised` | `skipped`), which checks failed, and the checker's note.
-4. `delta` — the answer text: whole for a draft that passed, in pieces for a rewrite.
-5. `done` — the answer's id and time.
+2. `stage` — what the assistant is doing (`drafting` | `checking` | `revising`).
+3. `draft` — the draft as it is written. Work in progress, shown as thinking; not the answer.
+4. `evaluation` — how the check of the draft went (`passed` | `revised` | `skipped`), which checks failed, and the checker's note.
+5. `delta` — the answer text: the whole draft in one piece when it passed, the rewrite in pieces when it did not.
+6. `done` — the answer's id and time.
 
-`stage` and `evaluation` are sent only when answers are checked, which is the default.
+`stage`, `draft`, and `evaluation` are sent only when answers are checked, which is the default. A client that reads only `delta` shows checked text only.
 
 If the answer fails after the stream has opened, an `error` event (a problem document) is sent instead of `done`.
 

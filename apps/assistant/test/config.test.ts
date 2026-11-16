@@ -57,7 +57,7 @@ describe("loadConfig", () => {
 describe("resolveLlm", () => {
   it("says what to set when nothing is configured", () => {
     expect(notReady({})).toMatch(/AUTOX_USERNAME and AUTOX_KEY/);
-    expect(notReady({})).toMatch(/docker compose up -d/);
+    expect(notReady({})).toMatch(/\.env file at the project root, then start the app again/);
   });
 
   it("needs only a Gemini key", () => {

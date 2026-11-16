@@ -4,76 +4,106 @@ People define **avatars**: a stance an assistant can take when it answers (a per
 
 Built for the Amdocs home assignment (avatar library + assistant that applies avatars).
 
-## Run
+## Run it
 
-1. Copy `.env.example` to `.env` and fill in `AUTOX_USERNAME` and `AUTOX_KEY` (Amdocs AutoX). The model has a default; the file lists others in comments.
-2. AutoX's certificate is signed by an Amdocs authority, so give those authorities to the container once. On a Mac that has them installed:
+### You need
 
-   ```bash
-   security find-certificate -a -c "Amdocs" -p /Library/Keychains/System.keychain > certs/amdocs-ca.pem
-   ```
+| | |
+|---|---|
+| **Node.js 22.15 or later** | `node -v` to check |
+| **pnpm** | `npm install -g pnpm` |
+| **The Amdocs VPN** | the language model (Amdocs AutoX) answers only on the Amdocs network |
+| **Your AutoX user name and key** | two lines in a file, in step 2 |
 
-3. Start the demo:
+### Three steps
 
-   ```bash
-   docker compose up --build
-   ```
+**1. Get the code**
 
-4. Open `http://localhost:8090`.
+```bash
+git clone https://github.com/liotur/ai_avatars.git
+cd ai_avatars
+cp .env.example .env
+```
 
-Without a key the app still starts. The library works, and the chat page says what is missing.
+**2. Put your AutoX user name and key in `.env`**
 
-AutoX answers on the Amdocs network (VPN) only, while building the image needs the internet. On a network that reaches the internet only through a proxy, give that proxy to Docker before building. [docs/LLM.md](./docs/LLM.md) has the details, and the way to use another provider when AutoX is out of reach.
+```
+AUTOX_USERNAME=your-user-name
+AUTOX_KEY=your-key
+```
 
-Set `AVATARS_PORT` in `.env` to use another port. Avatars are stored in a Docker volume, so they survive a restart.
+Nothing else needs changing. The model has a default (`gpt-4.1-mini`); the file lists others in comments. `.env` is never committed.
+
+**3. Install and start**
+
+```bash
+pnpm install
+pnpm start
+```
+
+Open **http://localhost:5173**.
+
+You land on the chat. Ask something, or open **Library** to see the nine avatars the app starts with. **How it works** shows the parts and follows one question through them.
+
+To stop, press `Ctrl+C`. To start again later, `pnpm start` is enough.
+
+### If something is off
+
+| You see | Why | Do |
+|---|---|---|
+| "Assistant needs setup" in the top bar | `AUTOX_USERNAME` or `AUTOX_KEY` is empty | Fill both in `.env`, then stop and `pnpm start` again |
+| "Could not reach the provider" | The VPN is off | Connect the VPN and send the message again |
+| "Amdocs AutoX returned 401" | The key or the user name is wrong | Correct `.env`, then stop and `pnpm start` again |
+| A port is already in use | Something else is on 3000, 3001, 3002, or 5173 | Stop it, then `pnpm start` again |
 
 ## What you can do
 
-- **Library** — create, open, edit, and delete avatars. Each avatar has a name, a description, a perspective, a voice, an ordered list of what it cares about, a list of what it ignores, the situations to use it in, and an intensity (how strongly it shapes an answer).
+- **Chat** — ask a question. Leave the choice to the assistant, or pick an avatar yourself. Each answer names the avatar that gave it, says whether it was chosen, created, or requested, and gives the reason. The assistant remembers the conversation, so follow-up questions work; "New chat" starts over.
+- **Validated answers** — you watch the avatar think. A second model call then validates the draft (does it answer the question, is it sound, does it follow the avatar's stance and voice), and a draft that fails is rewritten once before it counts as the answer.
+- **Library** — create, open, edit, and delete avatars. Each avatar has a name, a description, a perspective, a voice, an ordered list of what it cares about, a list of what it ignores, the situations to use it in, and an intensity (how strongly it shapes an answer). An avatar the assistant creates is saved here, where you can edit it.
 - **Starter avatars** — a new library has nine, from a plain Generalist to a Roast Master, a Software Engineer, a QA Tester, a Philosopher, and Future Me at 80. Ask them the same question to see what an avatar changes.
-- **Chat** — ask a question. Leave the choice to the assistant, or pick an avatar yourself. Each answer names the avatar that gave it, says whether it was chosen, created, or requested, and gives the reason. An avatar the assistant creates is saved to the library, where you can edit it. The assistant remembers the conversation, so you can ask follow-up questions; "New chat" starts over. Before you see an answer, a second model call checks the draft, and a draft that fails is rewritten once.
 - **How it works** — a page in the app with a diagram of the parts and one question traced through them, step by step.
 
-## Components
+## How it is built
 
 ```
 Web UI
 ├─ Library — REST ──► Avatar manager (SQLite)
 └─ Chat    — REST ──► Assistant ── MCP ──► Avatar MCP ── REST ──► Avatar manager
-                      └── language model provider
+                      └── language model (Amdocs AutoX)
 ```
 
 Four parts, each with one job. The assistant owns the prompts and never touches the database. The avatar manager owns the data and knows nothing about language models. [ARCHITECTURE.md](./ARCHITECTURE.md) has the detail.
 
 | Path | Purpose |
 |------|---------|
-| `apps/web` | The UI: avatar library and chat |
+| `apps/web` | The UI: chat, avatar library, and the How it works page |
 | `apps/avatar-manager` | REST API and SQLite. The only writer of avatar data |
 | `apps/avatar-mcp` | MCP server: three tools over the avatar REST API |
-| `apps/assistant` | Sessions, prompts, the choose-or-create loop, and the model calls |
+| `apps/assistant` | Sessions, prompts, the choose-or-create loop, the answer check, and the model calls |
 | `contracts/` | OpenAPI specs: the source of truth for both REST APIs |
 | `packages/contracts` | Types, clients, and Zod schemas generated from `contracts/` (not committed) |
-| `Dockerfile`, `docker-compose.yml`, `docker/` | The demo image: all four processes behind one port |
-| `docs/` | [Contracts](./docs/CONTRACTS.md), [model providers](./docs/LLM.md), [screens](./docs/ui-pages.md) |
+| `docs/` | [Contracts](./docs/CONTRACTS.md), [the language model and its settings](./docs/LLM.md), [screens](./docs/ui-pages.md) |
 
-## Develop
-
-Needs Node 22 or later and pnpm.
+`pnpm start` generates the typed clients from `contracts/` and runs the four parts in watch mode: the UI on 5173, the avatar manager on 3000, the avatar MCP server on 3001, and the assistant on 3002. Avatars are kept in `apps/avatar-manager/data/`.
 
 ```bash
-pnpm install
-pnpm generate   # writes packages/contracts/src from contracts/
-pnpm dev        # all four apps in watch mode
+pnpm test        # all tests
+pnpm typecheck   # all type checks
 ```
 
-Then open `http://localhost:5173`. The services listen on 3000 (avatar manager), 3001 (avatar MCP), and 3002 (assistant). The assistant reads the same `.env` file at the project root.
+## Optional: one container
+
+The same app can run as a single Docker container. It is not needed to try the project.
 
 ```bash
-pnpm test
-pnpm typecheck
+docker compose up --build
 ```
 
-Run `pnpm generate` again after changing a file in `contracts/`.
+Then open `http://localhost:8090`. Two things differ from the steps above:
+
+- **Building needs the internet** (Docker Hub, npm, Debian), and the Amdocs network reaches it only through the company proxy. Build off the VPN, or give Docker the proxy first.
+- **The container does not know the Amdocs certificate authorities**, which AutoX's certificate is signed by. Put them in `certs/` once ([certs/README.md](./certs/README.md) has the one command), or every message ends with "Could not reach the provider".
 
 ## License
 

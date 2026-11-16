@@ -53,7 +53,7 @@ describe('how it works', () => {
     const steps = document.querySelectorAll('ol.flow > li');
     expect(steps).toHaveLength(7);
     const flow = document.querySelector('ol.flow') as HTMLElement;
-    for (const text of ['list_avatars', 'get_avatar', 'create_avatar', 'requested', 'chosen', 'created', 'answers', 'sound', 'stance', 'voice', 'checked', 'evaluation', 'done']) {
+    for (const text of ['list_avatars', 'get_avatar', 'create_avatar', 'requested', 'chosen', 'created', 'answers', 'sound', 'stance', 'voice', 'validated', 'draft', 'evaluation', 'done']) {
       expect(within(flow).getAllByText(text).length).toBeGreaterThan(0);
     }
     expect(screen.getByRole('link', { name: 'Try it in chat' })).toHaveAttribute('href', '/chat');

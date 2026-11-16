@@ -1,11 +1,26 @@
-import type { AvatarEvent, DeltaEvent, EvaluationEvent, MessageRequest, StageEvent } from '@avatars/contracts/assistant';
-import { zAvatarEvent, zDeltaEvent, zEvaluationEvent, zProblem, zStageEvent } from '@avatars/contracts/assistant/zod';
+import type {
+  AvatarEvent,
+  DeltaEvent,
+  DraftEvent,
+  EvaluationEvent,
+  MessageRequest,
+  StageEvent,
+} from '@avatars/contracts/assistant';
+import {
+  zAvatarEvent,
+  zDeltaEvent,
+  zDraftEvent,
+  zEvaluationEvent,
+  zProblem,
+  zStageEvent,
+} from '@avatars/contracts/assistant/zod';
 import { assistantApiUrl } from './config';
 import { ProblemError, problemFromResponse, statusMessage, type ProblemDetails } from './problem';
 
 export type ChatStreamEvent =
   | { event: 'avatar'; data: AvatarEvent }
   | { event: 'stage'; data: StageEvent }
+  | { event: 'draft'; data: DraftEvent }
   | { event: 'evaluation'; data: EvaluationEvent }
   | { event: 'delta'; data: DeltaEvent }
   | { event: 'done' }
@@ -142,7 +157,13 @@ function parseSseBlock(block: string): ChatStreamEvent | null {
     return { event: 'delta', data: parsed.data };
   }
 
-  // A stage or a check result that cannot be read is not worth failing the answer for.
+  // A stage, a piece of the draft, or a check result that cannot be read is not
+  // worth failing the answer for.
+  if (eventName === 'draft') {
+    const parsed = zDraftEvent.safeParse(json);
+    return parsed.success ? { event: 'draft', data: parsed.data } : null;
+  }
+
   if (eventName === 'stage') {
     const parsed = zStageEvent.safeParse(json);
     return parsed.success ? { event: 'stage', data: parsed.data } : null;

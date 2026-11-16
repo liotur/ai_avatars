@@ -1419,6 +1419,33 @@ dialog p + p {
   overflow-wrap: anywhere;
 }
 
+/* The draft while it is written and validated: visibly not the answer yet. */
+.thinking {
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+
+.first-draft {
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+
+.first-draft summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+.first-draft[open] summary {
+  margin-bottom: 0.5rem;
+}
+
 .answer-stopped {
   color: var(--text-faint);
   font-size: 0.875rem;
