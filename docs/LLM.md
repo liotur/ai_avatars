@@ -2,28 +2,43 @@
 
 Only the **assistant** holds the API key. The browser, avatar manager, and MCP server never see it.
 
+This project calls the Amdocs AutoX proxy. The protocol is the OpenAI **Responses** API, not chat completions.
+
+```
+POST {AUTOX_BASE_URL}/responses?api-version={AUTOX_API_VERSION}
+api-key: {AUTOX_KEY}
+username: {AUTOX_USERNAME}
+application: {AUTOX_APPLICATION}
+Content-Type: application/json
+```
+
+```json
+{
+  "model": "gpt-4.1-mini",
+  "input": [
+    { "role": "user", "content": [{ "type": "input_text", "text": "ping" }] }
+  ]
+}
+```
+
+A system prompt is an `input` item with `"role": "system"` and the same `input_text` content. Streaming uses the Responses API stream, and the text shown to the user is taken from the output text deltas.
+
 ## Environment variables
 
-| Variable | Required | Notes |
-|----------|----------|--------|
-| `LLM_API_KEY` | Yes (for hosted providers) | Ollama local may omit auth |
-| `LLM_PROVIDER` | No | If omitted, infer from key prefix when possible |
-| `LLM_MODEL` | Sometimes | Required when the provider has no default |
-| `LLM_BASE_URL` | Sometimes | Required for `custom` and some gateways |
-| `LLM_USERNAME` | No | Gateways that need a user header (e.g. internal AI platforms) |
+| Variable | Required | Default |
+|---|---|---|
+| `LLM_PROVIDER` | yes | `autox` |
+| `AUTOX_KEY` | yes | — |
+| `AUTOX_USERNAME` | yes | — |
+| `AUTOX_BASE_URL` | no | `https://chat.autox.corp.amdocs.azr/api/v1/proxy/openai` |
+| `AUTOX_API_VERSION` | no | `2025-03-01-preview` |
+| `AUTOX_APPLICATION` | no | `autox-merged-ui` |
+| `LLM_MODEL` | no | `gpt-4.1-mini` |
 
-## Planned implementation
+`LLM_API_KEY` is accepted as a fallback for `AUTOX_KEY`. `USERNAME` is accepted as a fallback for `AUTOX_USERNAME`, so an existing shell export keeps working. Empty `AUTOX_*` values fall through to those aliases. The key is never logged.
 
-- **Runtime:** Vercel AI SDK (`ai`) for classification, answer generation, and streaming.
-- **One model** for both the classify step and the answer step (no separate classifier model in v1).
-- **Provider table:** a checked-in `llm-providers.json` (OpenAI-compatible chat completions) for base URLs, default models, auth headers, and key-prefix detection — same idea as an early spike in a local `avatar` prototype.
+One model does both the classification call and the answer. There is no separate classifier model.
 
-Supported provider ids in that table are expected to include at least: `openai`, `gemini`, `openrouter`, `ollama`, `custom`. Corporate gateways can be added as extra entries without changing the assistant loop.
+## Startup
 
-## Startup behaviour
-
-On boot the assistant loads `.env`, merges with process environment, validates with Zod, and fails fast with a clear message if the key, model, or base URL is missing.
-
-## Demo container
-
-`docker compose` injects `LLM_*` from the host `.env` into the assistant process only. Internal URLs (`AVATAR_MCP_URL`, etc.) are set inside the image for the all-in-one demo; see [ARCHITECTURE.md](../ARCHITECTURE.md).
+The assistant reads the process environment (and a local `.env` when one exists), checks the values with Zod, and refuses to start if the key, username, base URL, or model is missing.

@@ -1,0 +1,22 @@
+# Demo only: one container runs the UI, avatar manager, MCP server, and assistant.
+# In a real deployment each of those is its own image.
+services:
+  avatars:
+    build: .
+    ports:
+      - "8090:8080"
+    environment:
+      AUTOX_KEY: ${AUTOX_KEY:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      AUTOX_USERNAME: ${AUTOX_USERNAME:-}
+      USERNAME: ${USERNAME:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-autox}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+      AUTOX_BASE_URL: ${AUTOX_BASE_URL:-https://chat.autox.corp.amdocs.azr/api/v1/proxy/openai}
+      AUTOX_API_VERSION: ${AUTOX_API_VERSION:-2025-03-01-preview}
+      AUTOX_APPLICATION: ${AUTOX_APPLICATION:-autox-merged-ui}
+    volumes:
+      - avatars-data:/data
+
+volumes:
+  avatars-data:

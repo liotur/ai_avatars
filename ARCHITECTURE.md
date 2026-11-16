@@ -63,7 +63,7 @@ A seeded **Generalist** avatar (`useWhen`: simple factual or how-to questions) k
 - **HTTP services:** Hono with `@hono/zod-validator`, using the generated Zod schemas. Errors are returned as `application/problem+json`.
 - **Storage:** SQLite (`better-sqlite3`) with Drizzle. `name` is `UNIQUE COLLATE NOCASE`, and list fields are JSON columns.
 - **MCP:** `@modelcontextprotocol/sdk`, Streamable HTTP transport. Tool input schemas reuse the generated Zod schemas.
-- **LLM:** Vercel AI SDK (`ai`), which keeps the provider behind one interface. One model classifies and answers. The classifier's output schema is defined in the assistant, next to the prompt. The answer is streamed to the client as server-sent events.
+- **LLM:** Vercel AI SDK (`ai`) against the Amdocs AutoX Responses API (`POST {base}/responses`). One model classifies and answers. Settings are in [docs/LLM.md](docs/LLM.md). The classifier's output schema is defined in the assistant, next to the prompt. The answer is streamed to the client as server-sent events.
 - **UI:** TypeScript (strict), React, Vite, TanStack Query for REST, and the generated clients. See [UI](#ui).
 - **Tests:** Vitest. Contract tests check service responses against the specs. Assistant tests run against a mocked model.
 
@@ -99,10 +99,13 @@ Everything is configured through environment variables, read once at startup and
 
 | Variable | Used by | Example |
 |---|---|---|
-| `LLM_PROVIDER` | assistant | `openai` \| `anthropic` \| `google` \| `openai-compatible` |
-| `LLM_API_KEY` | assistant | — |
+| `LLM_PROVIDER` | assistant | `autox` |
+| `AUTOX_KEY` | assistant | API key. Sent as the `api-key` header. `LLM_API_KEY` is a fallback |
+| `AUTOX_USERNAME` | assistant | Sent as the `username` header. `USERNAME` is a fallback |
+| `AUTOX_BASE_URL` | assistant | `https://chat.autox.corp.amdocs.azr/api/v1/proxy/openai` |
+| `AUTOX_API_VERSION` | assistant | `2025-03-01-preview` (query parameter) |
+| `AUTOX_APPLICATION` | assistant | `autox-merged-ui` (header) |
 | `LLM_MODEL` | assistant | `gpt-4.1-mini` |
-| `LLM_BASE_URL` | assistant | optional; for `openai-compatible` (Azure, Ollama, vLLM) |
 | `AVATAR_MCP_URL` | assistant | `http://localhost:3001/mcp` (set inside the demo image) |
 | `AVATAR_API_URL` | avatar-mcp | `http://localhost:3000/v1` (set inside the demo image) |
 | `DATABASE_PATH` | avatar-manager | `./data/avatars.db` |
@@ -112,7 +115,7 @@ The API key stays in the assistant. It never reaches the browser, the MCP server
 
 ## Run
 
-Copy `.env.example` to `.env`, set `LLM_PROVIDER`, `LLM_API_KEY`, and `LLM_MODEL`, then:
+Copy `.env.example` to `.env`, set `AUTOX_KEY` and `AUTOX_USERNAME`, then:
 
 ```
 docker compose up --build

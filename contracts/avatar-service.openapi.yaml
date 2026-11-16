@@ -14,6 +14,10 @@ info:
     and the avatar MCP server (which exposes a subset of these operations as
     tools to the assistant).
 
+    Surrounding whitespace is trimmed from every text field and list item
+    before validation and storage, so length, uniqueness and name-clash
+    checks apply to the trimmed values.
+
     First version: one user, no authentication, tens of avatars.
   license:
     name: UNLICENSED

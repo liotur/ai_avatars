@@ -1,0 +1,14 @@
+{
+  "name": "ai-avatars",
+  "private": true,
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "generate": "pnpm --filter @avatars/contracts generate",
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck"
+  }
+}

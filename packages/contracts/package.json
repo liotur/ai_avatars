@@ -1,0 +1,23 @@
+{
+  "name": "@avatars/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./avatar": "./src/avatar/index.ts",
+    "./avatar/zod": "./src/avatar/zod.gen.ts",
+    "./assistant": "./src/assistant/index.ts",
+    "./assistant/zod": "./src/assistant/zod.gen.ts"
+  },
+  "scripts": {
+    "generate": "openapi-ts -f openapi-ts.avatar.ts && openapi-ts -f openapi-ts.assistant.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.90.0",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
